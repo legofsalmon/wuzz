@@ -23,8 +23,11 @@ cp -R NITEDRIVE.component ~/Library/Audio/Plug-Ins/Components/
 Restart Live and rescan (**Preferences → Plug-Ins → Rescan**). NITEDRIVE appears
 under *Plug-Ins → VST3* (or *Audio Units*) as an instrument.
 
-The binaries are ad-hoc signed, not notarised, so the first load is blocked by
-Gatekeeper. Clear the quarantine flag:
+If the build was signed and notarised (see
+[Signing and notarisation](#signing-and-notarisation)), that is all you need to do.
+
+Otherwise the binaries are only ad-hoc signed, and Gatekeeper blocks the first load.
+Clear the quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/NITEDRIVE.vst3
@@ -47,6 +50,58 @@ the build is universal, so an Intel Mac or a Rosetta host works too.
 >
 > You can confirm the AU is loadable the same way macOS does:
 > `auval -v aumu Ntdr Ndrv`
+
+## Signing and notarisation
+
+CI signs both bundles either way. With no secrets set it ad-hoc signs them, which is
+enough for Apple Silicon to load them locally but still leaves the quarantine flag
+for anyone who downloads them. Add the secrets below and the same workflow signs
+with your Developer ID, notarises with Apple, and staples the ticket — after which
+the plugin installs and loads with no `xattr` step on any Mac.
+
+Set these under **Settings → Secrets and variables → Actions**.
+
+**Signing** (all three required):
+
+| Secret | What it is |
+|--------|-----------|
+| `MACOS_CERTIFICATE` | Your *Developer ID Application* certificate as base64. Export it from Keychain Access as a `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `MACOS_CERTIFICATE_PWD` | The password you set when exporting the `.p12` |
+| `MACOS_SIGNING_IDENTITY` | The identity string, e.g. `Developer ID Application: Your Name (ABCDE12345)`. Find it with `security find-identity -v -p codesigning` |
+
+Note it must be a **Developer ID Application** certificate, not *Apple Development*
+or *Apple Distribution* — only Developer ID is valid for software shipped outside
+the App Store.
+
+**Notarisation** — pick one of these two sets:
+
+*App Store Connect API key (recommended; does not expire):*
+
+| Secret | What it is |
+|--------|-----------|
+| `NOTARY_KEY` | The `.p8` key file as base64. Create the key at [App Store Connect → Users and Access → Integrations → Keys](https://appstoreconnect.apple.com/access/integrations/api) |
+| `NOTARY_KEY_ID` | The key ID shown next to it |
+| `NOTARY_ISSUER_ID` | The issuer UUID at the top of that page |
+
+*Apple ID (simpler to set up, app-specific password can expire):*
+
+| Secret | What it is |
+|--------|-----------|
+| `APPLE_ID` | Your Apple ID email |
+| `APPLE_APP_PASSWORD` | An app-specific password from [account.apple.com](https://account.apple.com) → Sign-In and Security |
+| `APPLE_TEAM_ID` | Your 10-character team ID |
+
+The workflow prefers the API key when both are present. Notarisation adds roughly a
+minute or two per bundle. If signing secrets are set but notarisation ones are not,
+the build still succeeds and warns.
+
+To sign a local build yourself:
+
+```bash
+codesign --force --timestamp --options runtime \
+  --sign "Developer ID Application: Your Name (ABCDE12345)" \
+  build/NITEDRIVE_artefacts/Release/VST3/NITEDRIVE.vst3
+```
 
 ## Build from source
 

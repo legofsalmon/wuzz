@@ -69,29 +69,112 @@ jobs:
           find build -name "*.component" -maxdepth 6 -exec cp -R {} dist/ \; || true
           ls -R dist
 
-      # JUCE ad-hoc signs the VST3 as a side effect of regenerating moduleinfo.json,
-      # but nothing signs the AU. Apple Silicon refuses to load unsigned bundles, so
-      # an unsigned .component fails Audio Unit validation and never shows up in the
-      # host. Sign both explicitly.
-      - name: Ad-hoc sign macOS bundles
+      # Signing has two modes. With a Developer ID certificate in the repo secrets
+      # the bundles are properly signed with a hardened runtime, which is what
+      # notarisation requires. Without one - forks, or before the secrets are set -
+      # it falls back to ad-hoc signing so the build still produces something
+      # loadable. Either way the AU must be signed: JUCE only ad-hoc signs the VST3
+      # (as a side effect of regenerating moduleinfo.json) and Apple Silicon refuses
+      # to load an unsigned bundle at all.
+      - name: Sign macOS bundles
         if: runner.os == 'macOS'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          SIGN_ID: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
-          for bundle in dist/NITEDRIVE.vst3 dist/NITEDRIVE.component; do
-            codesign --force --sign - --timestamp=none "$bundle"
-            codesign --verify --verbose=2 "$bundle"
+          set -euo pipefail
+
+          if [ -z "${CERT_P12:-}" ]; then
+            echo "::notice::No Developer ID certificate in secrets - ad-hoc signing."
+            for b in dist/NITEDRIVE.vst3 dist/NITEDRIVE.component; do
+              codesign --force --sign - --timestamp=none "$b"
+              codesign --verify --strict --verbose=2 "$b"
+            done
+            echo "SIGNED_WITH_DEVELOPER_ID=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PWD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          # --options runtime enables the hardened runtime, without which Apple will
+          # reject the notarisation submission.
+          for b in dist/NITEDRIVE.vst3 dist/NITEDRIVE.component; do
+            codesign --force --timestamp --options runtime --sign "$SIGN_ID" "$b"
+            codesign --verify --strict --verbose=2 "$b"
           done
+
+          echo "SIGNED_WITH_DEVELOPER_ID=true" >> "$GITHUB_ENV"
+
+      # Notarisation is what lets the plugin load on someone else's Mac without them
+      # having to strip the quarantine flag by hand. Stapling attaches the ticket to
+      # the bundle so it validates offline.
+      - name: Notarise and staple
+        if: runner.os == 'macOS' && env.SIGNED_WITH_DEVELOPER_ID == 'true'
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${NOTARY_KEY:-}" ]; then
+            echo "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            AUTH=(--key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+          elif [ -n "${APPLE_ID:-}" ]; then
+            AUTH=(--apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          else
+            echo "::warning::Signed with Developer ID but no notarisation credentials - skipping notarisation."
+            exit 0
+          fi
+
+          for b in NITEDRIVE.vst3 NITEDRIVE.component; do
+            # ditto, not zip: it preserves the bundle structure Apple expects.
+            ditto -c -k --keepParent "dist/$b" "$RUNNER_TEMP/$b.zip"
+            xcrun notarytool submit "$RUNNER_TEMP/$b.zip" "${AUTH[@]}" --wait --timeout 30m
+            xcrun stapler staple "dist/$b"
+            xcrun stapler validate "dist/$b"
+          done
+
+          rm -f "$RUNNER_TEMP/notary.p8"
+          echo "::notice::Bundles notarised and stapled - no quarantine workaround needed."
 
       - name: Verify macOS bundles are universal and signed
         if: runner.os == 'macOS'
         run: |
+          set -euo pipefail
           for fmt in vst3 component; do
-            BIN="dist/NITEDRIVE.$fmt/Contents/MacOS/NITEDRIVE"
+            BUNDLE="dist/NITEDRIVE.$fmt"
+            BIN="$BUNDLE/Contents/MacOS/NITEDRIVE"
             echo "== $fmt =="
             lipo -info "$BIN"
             lipo -info "$BIN" | grep -q "x86_64"
             lipo -info "$BIN" | grep -q "arm64"
-            test -d "dist/NITEDRIVE.$fmt/Contents/_CodeSignature"
-            codesign --verify --strict "dist/NITEDRIVE.$fmt"
+            test -d "$BUNDLE/Contents/_CodeSignature"
+            codesign --verify --strict --verbose=2 "$BUNDLE"
+            codesign --display --verbose=2 "$BUNDLE" 2>&1 | grep -E "Authority|Signature|TeamIdentifier" || true
+            if [ "${SIGNED_WITH_DEVELOPER_ID:-false}" = "true" ]; then
+              # A notarised, stapled bundle loads on any Mac with no user intervention.
+              xcrun stapler validate "$BUNDLE" \
+                && echo "  stapled: yes" \
+                || echo "::warning::$fmt is signed but not stapled - users will need the xattr step."
+            fi
           done
 
       # auval is what macOS itself runs before a host will list an Audio Unit, so
