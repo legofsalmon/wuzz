@@ -1,0 +1,12 @@
+build/
+cmake-build-*/
+JUCE/
+*.o
+*.a
+*.so
+*.dylib
+*.vst3
+*.component
+.DS_Store
+.vscode/
+.idea/
