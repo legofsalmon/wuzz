@@ -50,7 +50,14 @@ public:
     int  getAge() const noexcept { return age; }
     float getEnvLevel() const noexcept { return ampEnv.getLevel(); }
 
-    void startNote (int midiNote, float velocity, const EngineParams& p, bool retrigger) noexcept
+    /** @param retrigger  this voice is already sounding, so keep its oscillator
+                            phases, filter state and envelope level and slide instead
+                            of restarting
+        @param glideFrom   note number to slide up from when this voice is *not*
+                           already sounding, or -1 to start in tune. Used when glide
+                           is set to apply to every note rather than legato only. */
+    void startNote (int midiNote, float velocity, const EngineParams& p,
+                    bool retrigger, float glideFrom = -1.0f) noexcept
     {
         note = midiNote;
         vel = clampf (velocity, 0.0f, 1.0f);
@@ -59,9 +66,11 @@ public:
 
         targetNote = (float) midiNote;
 
-        const bool glideFromExisting = retrigger && p.glideTime > 0.0f;
-        if (! glideFromExisting)
-            glideSmoother = targetNote;
+        if (p.glideTime <= 0.0f)
+            glideSmoother = targetNote;                 // no glide: start in tune
+        else if (! retrigger)
+            glideSmoother = glideFrom >= 0.0f ? glideFrom : targetNote;
+        // else the voice is already sounding, so it slides on from where it is
 
         randomPerNote = rng.nextBipolar();
         driftTarget = rng.nextBipolar();

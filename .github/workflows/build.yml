@@ -1,0 +1,120 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (universal)
+            os: macos-14
+            artifact: nitedrive-macos-universal
+          - name: Windows
+            os: windows-latest
+            artifact: nitedrive-windows-x64
+          - name: Linux
+            os: ubuntu-22.04
+            artifact: nitedrive-linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libjack-jackd2-dev libx11-dev libxcomposite-dev \
+            libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev \
+            libxrender-dev libfreetype6-dev libfontconfig1-dev \
+            libglu1-mesa-dev mesa-common-dev
+
+      # JUCE is fetched by CMake; caching it keeps the fetch off the critical path.
+      - name: Cache JUCE
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+        shell: bash
+
+      - name: Build plugin
+        run: cmake --build build --config $BUILD_TYPE --parallel 4
+        shell: bash
+
+      # The DSP suite is the real gate: it measures aliasing, filter tuning and
+      # envelope timing rather than just checking the thing links.
+      - name: Run DSP verification
+        run: ctest --test-dir build --build-config $BUILD_TYPE --output-on-failure
+        shell: bash
+
+      - name: Collect artefacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          find build -name "*.vst3" -maxdepth 6 -exec cp -R {} dist/ \; || true
+          find build -name "*.component" -maxdepth 6 -exec cp -R {} dist/ \; || true
+          ls -R dist
+
+      - name: Verify macOS binary is universal
+        if: runner.os == 'macOS'
+        run: |
+          BIN="dist/NITEDRIVE.vst3/Contents/MacOS/NITEDRIVE"
+          lipo -info "$BIN"
+          lipo -info "$BIN" | grep -q "x86_64" && lipo -info "$BIN" | grep -q "arm64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+          if-no-files-found: error
+
+  validate:
+    name: pluginval (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.os == 'macos-14' && 'nitedrive-macos-universal' || 'nitedrive-windows-x64' }}
+          path: dist
+
+      # pluginval exercises the plugin wrapper itself: parameter threading, state
+      # restore, editor open/close, odd block sizes and sample rates.
+      - name: Run pluginval (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sL "https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_macOS.zip" -o pluginval.zip
+          unzip -q pluginval.zip
+          pluginval.app/Contents/MacOS/pluginval \
+            --strictness-level 10 --validate-in-process --timeout-ms 600000 \
+            --validate "dist/NITEDRIVE.vst3"
+
+      # Expand-Archive rather than unzip, which is not on the Windows runners.
+      - name: Run pluginval (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive -Path pluginval.zip -DestinationPath . -Force
+          ./pluginval.exe --strictness-level 10 --validate-in-process --timeout-ms 600000 --validate "dist/NITEDRIVE.vst3"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

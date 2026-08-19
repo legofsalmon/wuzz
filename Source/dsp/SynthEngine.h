@@ -47,6 +47,7 @@ public:
         heldCount = 0;
         sustainDown = false;
         sustainedCount = 0;
+        lastPlayedNote = -1;
     }
 
     void setPitchBend (float normalised, int rangeSemis) noexcept
@@ -85,11 +86,18 @@ public:
         pushHeld (midiNote, velocity);
         removeSustained (midiNote);
 
+        // With legato-only glide off, a note slides up from the previous one even
+        // when nothing was held. That is the classic mono-synth portamento feel, and
+        // it is what the Glide Legato Only switch turns off.
+        const float glideFrom = (! p.glideLegatoOnly && p.glideTime > 0.0f && lastPlayedNote >= 0)
+                              ? (float) lastPlayedNote : -1.0f;
+
         if (p.voiceMode == VoiceMode::Poly)
         {
             Voice& v = allocateVoice (midiNote);
             const bool wasActive = v.isActive();
-            v.startNote (midiNote, velocity, p, wasActive);
+            v.startNote (midiNote, velocity, p, wasActive, glideFrom);
+            lastPlayedNote = midiNote;
             return;
         }
 
@@ -103,7 +111,9 @@ public:
         if (legatoSlide)
             v.glideTo (midiNote, velocity);
         else
-            v.startNote (midiNote, velocity, p, alreadySounding);
+            v.startNote (midiNote, velocity, p, alreadySounding, glideFrom);
+
+        lastPlayedNote = midiNote;
     }
 
     void noteOff (int midiNote, const EngineParams& p) noexcept
@@ -270,6 +280,7 @@ private:
     float sr = 96000.0f;
     float pitchBend = 0.0f;
     float modWheel = 0.0f;
+    int lastPlayedNote = -1;
 
     std::array<int, 128> held {};
     std::array<float, 128> heldVel {};
