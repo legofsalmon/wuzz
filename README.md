@@ -59,7 +59,17 @@ for anyone who downloads them. Add the secrets below and the same workflow signs
 with your Developer ID, notarises with Apple, and staples the ticket — after which
 the plugin installs and loads with no `xattr` step on any Mac.
 
-Set these under **Settings → Secrets and variables → Actions**.
+There is a helper that collects the values for you — run it on your Mac. It puts
+secret material on the clipboard rather than printing it, so nothing lands in your
+shell history:
+
+```bash
+./tools/signing-secrets.sh identity              # lists your Developer ID certs
+./tools/signing-secrets.sh cert   Certificates.p12
+./tools/signing-secrets.sh notary AuthKey_XXXXXXXXXX.p8
+```
+
+Set the results under **Settings → Secrets and variables → Actions**.
 
 **Signing** (all three required):
 
@@ -67,7 +77,7 @@ Set these under **Settings → Secrets and variables → Actions**.
 |--------|-----------|
 | `MACOS_CERTIFICATE` | Your *Developer ID Application* certificate as base64. Export it from Keychain Access as a `.p12`, then `base64 -i cert.p12 \| pbcopy` |
 | `MACOS_CERTIFICATE_PWD` | The password you set when exporting the `.p12` |
-| `MACOS_SIGNING_IDENTITY` | The identity string, e.g. `Developer ID Application: Your Name (ABCDE12345)`. Find it with `security find-identity -v -p codesigning` |
+| `MACOS_SIGNING_IDENTITY` | The identity string, e.g. `Developer ID Application: Your Name (ABCDE12345)` — the quoted part of `security find-identity -v -p codesigning`, without the quotes |
 
 Note it must be a **Developer ID Application** certificate, not *Apple Development*
 or *Apple Distribution* — only Developer ID is valid for software shipped outside
@@ -79,9 +89,14 @@ the App Store.
 
 | Secret | What it is |
 |--------|-----------|
-| `NOTARY_KEY` | The `.p8` key file as base64. Create the key at [App Store Connect → Users and Access → Integrations → Keys](https://appstoreconnect.apple.com/access/integrations/api) |
-| `NOTARY_KEY_ID` | The key ID shown next to it |
-| `NOTARY_ISSUER_ID` | The issuer UUID at the top of that page |
+| `NOTARY_KEY` | The `.p8` key file as base64 |
+| `NOTARY_KEY_ID` | The 10-character key ID — also the `XXXXXXXXXX` in the downloaded `AuthKey_XXXXXXXXXX.p8` filename |
+| `NOTARY_ISSUER_ID` | The issuer UUID printed above the key table; the same for every key on your team |
+
+Create the key at [App Store Connect → Users and Access → Integrations → App Store
+Connect API](https://appstoreconnect.apple.com/access/integrations/api), on the
+**Team Keys** tab, with the **Developer** role or higher. Apple lets you download
+the `.p8` exactly once — if you lose it, revoke the key and make another.
 
 *Apple ID (simpler to set up, app-specific password can expire):*
 
