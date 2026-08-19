@@ -4,6 +4,8 @@
 #include "Envelope.h"
 #include "Unison.h"
 
+#include <limits>
+
 namespace nd
 {
 
@@ -28,6 +30,7 @@ public:
         dcBlock.prepare (oversampledRate);
         driftLfo.setTimeConstant (0.35f, oversampledRate);
         glideSmoother = 0.0f;
+        cachedGlideTime = -1.0f;   // glideCoef depends on the rate, so force a recompute
         reset();
     }
 
@@ -139,7 +142,10 @@ public:
         if (! active)
             return;
 
-        ++age;
+        // Saturate rather than wrap: signed overflow is UB, and a wrapped age would
+        // invert the voice-stealing priority on a note held for hours.
+        if (age < std::numeric_limits<int>::max())
+            ++age;
 
         // ---- envelopes and LFOs -------------------------------------------------
         const float e1 = ampEnv.process();

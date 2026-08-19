@@ -50,9 +50,37 @@ public:
         lastPlayedNote = -1;
     }
 
+    /** The wheel position is kept separately so a Bend Range change takes effect
+        immediately, rather than waiting for the next wheel message. */
     void setPitchBend (float normalised, int rangeSemis) noexcept
     {
-        pitchBend = normalised * (float) rangeSemis;
+        bendNorm = normalised;
+        bendRange = rangeSemis;
+        pitchBend = bendNorm * (float) bendRange;
+    }
+
+    void setBendRange (int rangeSemis) noexcept
+    {
+        if (rangeSemis == bendRange)
+            return;
+
+        bendRange = rangeSemis;
+        pitchBend = bendNorm * (float) bendRange;
+    }
+
+    /** MIDI CC 123. The spec has this behave like note-offs for every held key,
+        unlike CC 120 (All Sound Off) which is immediate. Live sends CC 123 on
+        transport stop, so hard-resetting here truncates a long release mid-waveform
+        and clicks. */
+    void releaseAllNotes() noexcept
+    {
+        for (int i = 0; i < voiceCount; ++i)
+            if (voices[(size_t) i].isActive() && ! voices[(size_t) i].isReleasing())
+                voices[(size_t) i].stopNote();
+
+        heldCount = 0;
+        sustainDown = false;
+        sustainedCount = 0;
     }
 
     void setModWheel (float v) noexcept { modWheel = clampf (v, 0.0f, 1.0f); }
@@ -132,6 +160,18 @@ public:
     /** Adds `numSamples` of output into L and R. Both run at the oversampled rate. */
     void render (const EngineParams& p, float* L, float* R, int numSamples) noexcept
     {
+        // Leaving Poly strands voices 1..N-1: releaseNote only ever looks at voice 0
+        // in the mono modes, and allocateVoice is only reached from the Poly branch,
+        // so nothing would ever release or reclaim them.
+        if (p.voiceMode != lastVoiceMode)
+        {
+            if (p.voiceMode != VoiceMode::Poly)
+                for (int v = 1; v < voiceCount; ++v)
+                    voices[(size_t) v].stopNote();
+
+            lastVoiceMode = p.voiceMode;
+        }
+
         // Block-rate parameters have to reach the voices somehow; doing it here keeps
         // the per-sample path free of the comparisons.
         for (int v = 0; v < voiceCount; ++v)
@@ -284,8 +324,11 @@ private:
     int voiceCount = 8;
     float sr = 96000.0f;
     float pitchBend = 0.0f;
+    float bendNorm = 0.0f;
+    int bendRange = 2;
     float modWheel = 0.0f;
     int lastPlayedNote = -1;
+    VoiceMode lastVoiceMode = VoiceMode::Poly;
 
     std::array<int, 128> held {};
     std::array<float, 128> heldVel {};

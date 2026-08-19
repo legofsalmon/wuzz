@@ -142,13 +142,28 @@ public:
     {
         const float d = clampf (drive, 1.0f, 60.0f);
 
-        if (d != cachedDrive || type != cachedType)
+        if (type != cachedType)
         {
-            cachedDrive = d;
             cachedType = type;
-            // Keeps the drive knob a timbre control rather than a volume control.
+            cachedDrive = d;
+            outScale = std::pow (d, -0.3f);   // drive stays a timbre control, not a volume one
+            reset();                           // a different curve genuinely invalidates the history
+        }
+        else if (d != cachedDrive)
+        {
+            // Drive is a modulation destination, so it can change every single
+            // sample. Discarding the history here would drop the stage into its
+            // low-slope fallback permanently - anti-aliasing off, curve flattened,
+            // and quieter the moment you modulate it. The stored history is
+            // post-gain, so rescaling it keeps the ADAA running.
+            if (primed)
+            {
+                xPrev *= d / cachedDrive;
+                fPrev = ShapeMath::F (type, xPrev);
+            }
+
+            cachedDrive = d;
             outScale = std::pow (d, -0.3f);
-            reset();
         }
 
         const float xs = x * d;

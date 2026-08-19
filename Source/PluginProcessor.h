@@ -22,7 +22,12 @@ public:
     ~NitedriveProcessor() override { cancelPendingUpdate(); }
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
+    void releaseResources() override { reset(); }
+
+    /** Hosts call this on transport locate, freeze and offline render. Without it a
+        delay tail from one bounce bleeds into the next, and the plugin advertises a
+        4 second tail that nothing ever clears. */
+    void reset() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     using juce::AudioProcessor::processBlock;   // keep the double-precision overload visible
@@ -88,6 +93,11 @@ private:
 
     /** Reused when splitting an oversized block, so the split path allocates nothing. */
     juce::MidiBuffer chunkMidi;
+
+    // Effects are skipped entirely when bypassed, so their delay lines hold whatever
+    // was in them and replay it on re-enable. Tracked so they can be cleared on the
+    // off -> on edge.
+    bool wasPhaserOn = false, wasEnsembleOn = false, wasDelayOn = false;
 
     // Transport state, refreshed per block and used by the tempo-locked stages.
     double hostBpm = 120.0;

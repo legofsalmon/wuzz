@@ -202,14 +202,17 @@ on 8 voices is roughly a tenth of the figures above.
 Everything below is produced by the test suite (`ctest`) or by
 `tools/spectrum.py`, and is re-checked on every CI run.
 
-**Oscillator aliasing** — inharmonic energy relative to harmonic energy, at 48 kHz:
+**Oscillator aliasing** — inharmonic energy relative to harmonic energy, at 48 kHz.
+`ctest` prints this table on every run, so it is copied from a real one rather than
+maintained by hand. `tools/spectrum.py` uses the same transform length and harmonic
+tolerance and agrees to within a dB:
 
 | waveform | 55 Hz | 220 Hz | 880 Hz | 2 kHz | 4 kHz | 8 kHz |
 |----------|-------|--------|--------|-------|-------|-------|
 | saw      | −92 | −86 | −82 | −82 | −80 | −87 |
 | pulse    | −95 | −89 | −84 | −84 | −82 | −90 |
-| triangle | −137 | −119 | −101 | −113 | −125 | −135 |
-| sine     | −148 | −147 | −140 | −131 | −134 | −130 |
+| triangle | −141 | −122 | −106 | −98 | −90 | −93 |
+| sine     | −142 | −140 | −140 | −131 | −134 | −130 |
 
 For comparison, a polyBLEP saw — the usual approach — measures −33 dB at 880 Hz on
 the same harness, and a naive one −17 dB.

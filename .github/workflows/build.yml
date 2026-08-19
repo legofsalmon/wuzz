@@ -121,7 +121,21 @@ jobs:
                  -T /usr/bin/codesign -T /usr/bin/security 2> "$RUNNER_TEMP/import.err"; then
             echo "::error::Could not import the signing certificate. Apple reported:"
             sed 's/^/    /' "$RUNNER_TEMP/import.err"
-            echo "::error::The usual cause is MACOS_CERTIFICATE_PWD not matching the password set when the .p12 was exported - a trailing space or newline in the secret is enough to break it. Check the pair locally with: ./tools/signing-secrets.sh verify YourCert.p12"
+
+            # Apple gives the same message for a wrong password and for a secret that
+            # arrived corrupted, so print enough to tell them apart. The hash is of an
+            # encrypted container and reveals nothing about the key.
+            echo "  decoded certificate: $(wc -c < "$RUNNER_TEMP/cert.p12" | tr -d ' ') bytes"
+            echo "  sha256: $(shasum -a 256 "$RUNNER_TEMP/cert.p12" | cut -d' ' -f1)"
+            echo "  Compare against your local file:  shasum -a 256 YourCert.p12"
+            echo "  If they differ, MACOS_CERTIFICATE is truncated - re-copy with: base64 -i YourCert.p12 | pbcopy"
+            echo "  If they match, the file is fine and MACOS_CERTIFICATE_PWD is what is wrong."
+
+            if printf '%s' "$CERT_PWD" | head -c1 | grep -q '[[:space:]]' \
+               || printf '%s' "$CERT_PWD" | tail -c1 | grep -q '[[:space:]]'; then
+              echo "::error::MACOS_CERTIFICATE_PWD begins or ends with whitespace. That is almost certainly the problem - retype it by hand rather than pasting."
+            fi
+
             rm -f "$RUNNER_TEMP/cert.p12"
             exit 1
           fi

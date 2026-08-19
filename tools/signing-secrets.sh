@@ -57,15 +57,28 @@ verify)
     read -rs PW
     echo
 
-    if openssl pkcs12 -info -in "$P12" -noout -passin pass:"$PW" >/dev/null 2>&1; then
-        echo "  password OK"
-    else
-        echo "  password REJECTED - this is what CI will report as 'MAC verification failed'."
+    # Keychain Access exports with RC2-40-CBC, which OpenSSL 3 moved to its legacy
+    # provider. Homebrew's openssl therefore fails on a perfectly good file unless
+    # told otherwise; macOS's own LibreSSL at /usr/bin/openssl reads it directly.
+    # The MAC is checked before any of that, so a password error still surfaces.
+    ERR="$(openssl pkcs12 -info -in "$P12" -noout -passin pass:"$PW" 2>&1 >/dev/null || true)"
+
+    if printf '%s' "$ERR" | grep -qi "unsupported.*RC2\|RC2.*unsupported"; then
+        ERR="$(openssl pkcs12 -info -in "$P12" -noout -legacy -passin pass:"$PW" 2>&1 >/dev/null || true)"
+        if printf '%s' "$ERR" | grep -qi "unsupported\|unknown option"; then
+            ERR="$(/usr/bin/openssl pkcs12 -info -in "$P12" -noout -passin pass:"$PW" 2>&1 >/dev/null || true)"
+        fi
+    fi
+
+    if printf '%s' "$ERR" | grep -qi "mac verify error"; then
+        echo "  password REJECTED - this is what CI reports as 'MAC verification failed'."
         echo
-        echo "  If you are sure it is right, the .p12 may have been exported empty:"
-        echo "  re-export from Keychain Access (My Certificates -> right-click -> Export)."
+        echo "  Re-export from Keychain Access (My Certificates -> right-click -> Export)"
+        echo "  and set a password you are sure of."
         exit 1
     fi
+
+    echo "  password OK"
 
     if base64 -i "$P12" | base64 -d 2>/dev/null | cmp -s - "$P12"; then
         echo "  base64 round-trips cleanly"

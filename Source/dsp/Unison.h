@@ -76,11 +76,23 @@ public:
 
         const int* idx = layoutFor (count);
 
+        // An even-sized stack has no oscillator sitting on the centre spread, so the
+        // JP-8000 centre gain would go unclaimed and every voice would take the much
+        // smaller side gain - the whole stack drops by over 20 dB at low detune, and
+        // the level zigzags as the Unison knob is stepped. Splitting the centre gain
+        // across the innermost pair keeps the series smooth and leaves odd sizes
+        // bit-identical.
+        const bool even = (count % 2) == 0;
+        const int  innerA = even ? count / 2 - 1 : -1;
+        const int  innerB = even ? count / 2     : -1;
+
         for (int i = 0; i < count; ++i)
         {
             const float off = kSpread[idx[i]];
             const float inc = clampf (baseInc * (1.0f + off * d), 1.0e-6f, 0.45f);
-            const float g   = (off == 0.0f) ? gC : gS;
+            const float g   = (off == 0.0f)              ? gC
+                            : (i == innerA || i == innerB) ? 0.5f * gC
+                                                           : gS;
 
             const float v = oscs[i].process (t, inc, wave, pw, syncSince, syncUntil) * g;
 
@@ -142,8 +154,12 @@ private:
         {
             const float pos = clampf (kSpread[idx[i]] * (1.0f / 0.11f) * spread, -1.0f, 1.0f);
             const float a   = (pos + 1.0f) * 0.25f * kPi;      // 0..pi/2
-            panL[i] = std::cos (a);
-            panR[i] = std::sin (a);
+
+            // Normalised so a centred voice is unity in both channels, matching the
+            // voice-level panner. Without it a single-oscillator stack (which skips
+            // this path entirely) sits 3 dB above a two-oscillator one.
+            panL[i] = std::cos (a) * 1.41421356f;
+            panR[i] = std::sin (a) * 1.41421356f;
         }
     }
 

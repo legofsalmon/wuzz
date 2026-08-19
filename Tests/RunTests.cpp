@@ -67,7 +67,11 @@ void section (const juce::String& title)
 // harness report the same numbers.
 // ---------------------------------------------------------------------------
 
-constexpr int kFftOrder = 15;
+// Matches tools/spectrum.py: same transform length and the same harmonic tolerance,
+// so the C++ suite and the Python harness report the same number for the same
+// signal. They disagreed by tens of dB at low pitches when the tolerance was a
+// larger fraction of the harmonic spacing.
+constexpr int kFftOrder = 16;
 constexpr int kFftSize = 1 << kFftOrder;
 
 std::vector<float> blackmanHarris (int n)
@@ -86,7 +90,7 @@ std::vector<float> blackmanHarris (int n)
 
 /** Inharmonic energy relative to harmonic energy, in dB. Only content below fmax is
     counted, since a decimation filter removes the rest. */
-double aliasRatioDb (const float* x, int n, double f0, double sr, double fmax, int tolBins = 6)
+double aliasRatioDb (const float* x, int n, double f0, double sr, double fmax, int tolBins = 5)
 {
     juce::dsp::FFT fft (kFftOrder);
     std::vector<float> buf ((size_t) kFftSize * 2, 0.0f);
@@ -194,10 +198,16 @@ void testOscillatorAliasing()
     // platform float differences without letting a real regression through.
     constexpr double limitDb = -72.0;
 
+    // Printed as a markdown row so the README table is copied from a real run
+    // rather than maintained by hand - it drifted out of step with the code before.
+    std::cout << "\n  | waveform | 55 Hz | 220 Hz | 880 Hz | 2 kHz | 4 kHz | 8 kHz |" << std::endl;
+    std::cout << "  |----------|-------|--------|--------|-------|-------|-------|" << std::endl;
+
     for (int wave = 0; wave < 4; ++wave)
     {
         double worst = -200.0;
         double worstFreq = 0.0;
+        juce::String row = "  | " + juce::String (names[wave]).paddedRight (' ', 8) + " |";
 
         for (double target : { 55.0, 220.0, 880.0, 2000.0, 4000.0, 8000.0 })
         {
@@ -217,7 +227,11 @@ void testOscillatorAliasing()
 
             const double r = aliasRatioDb (buf.data(), kFftSize, f, sr, sr * 0.5);
             if (r > worst) { worst = r; worstFreq = target; }
+
+            row += " " + juce::String (juce::roundToInt (r)) + " |";
         }
+
+        std::cout << row << std::endl;
 
         checkBelow (worst, limitDb,
                     juce::String (names[wave]) + " worst-case aliasing (at "
@@ -537,12 +551,30 @@ void testGlide()
         const double f = zeroCrossingFreq (onset.data(), (int) onset.size(), sr);
 
         if (legatoOnly)
+        {
             checkWithin (f, 440.0, 40.0,
                          "legato-only glide starts a fresh note in tune", " Hz");
+        }
         else
-            checkTrue (f < 260.0,
-                       "always-glide slides the fresh note up from the previous one",
-                       juce::String (f, 1) + " Hz at onset, target 440 Hz");
+        {
+            // "Starts low" alone is also true of a voice stuck at the old pitch, so
+            // require it to actually arrive as well. render() sums into its output,
+            // so the buffer has to be cleared or this measures every chunk at once.
+            std::vector<float> settled ((size_t) (int) (sr * 0.02), 0.0f);
+
+            for (int i = 0; i < 60; ++i)                       // ~1.2 s, three glide time constants
+            {
+                std::fill (settled.begin(), settled.end(), 0.0f);
+                engine.render (p, settled.data(), dummy.data(), (int) settled.size());
+            }
+
+            const double arrived = zeroCrossingFreq (settled.data(), (int) settled.size(), sr);
+
+            checkTrue (f < 260.0 && arrived > 380.0,
+                       "always-glide slides up from the previous note and arrives",
+                       juce::String (f, 1) + " Hz at onset -> " + juce::String (arrived, 1)
+                           + " Hz settled, target 440 Hz");
+        }
     }
 }
 

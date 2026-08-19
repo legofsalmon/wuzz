@@ -50,6 +50,7 @@ public:
         for (auto& a : apL) a.reset();
         for (auto& a : apR) a.reset();
         fbL = fbR = 0.0f;
+        activeStages = kMaxStages;
         lfo.reset (0.0f);
     }
 
@@ -73,8 +74,20 @@ public:
         const float fL = clampf (base * fastExp2 (m  * sweep), 20.0f, 0.45f * sr);
         const float fR = clampf (base * fastExp2 (mR * sweep), 20.0f, 0.45f * sr);
 
-        const int n = clampf ((float) stages, 2.0f, (float) kMaxStages);
+        const int n = (int) clampf ((float) stages, 2.0f, (float) kMaxStages);
         const float fb = clampf (feedback, -0.95f, 0.95f);
+
+        // Stages above the current count keep their last sample indefinitely, so
+        // raising Stages - which happens on any preset change - would push that
+        // frozen audio back through the feedback loop as a burst out of silence.
+        if (n > activeStages)
+            for (int i = activeStages; i < n; ++i)
+            {
+                apL[i].reset();
+                apR[i].reset();
+            }
+
+        activeStages = n;
 
         float xl = l + fbL * fb;
         float xr = r + fbR * fb;
@@ -105,6 +118,7 @@ private:
     float sr = 48000.0f;
     Allpass1 apL[kMaxStages], apR[kMaxStages];
     float fbL = 0.0f, fbR = 0.0f;
+    int activeStages = kMaxStages;
     Lfo lfo;
 };
 
@@ -257,7 +271,11 @@ private:
         void reset() noexcept { z = 0.0f; }
         float processLP (float x, float fc) noexcept
         {
-            const float g = clampf (kTwoPi * fc / sr, 0.0f, 1.0f);
+            // The linear form (2*pi*fc/sr) saturates at exactly 1.0 - the filter
+            // becomes a wire - once fc passes sr/2pi, which is only 7.6 kHz at
+            // 48 kHz: the top quarter of the Tone knob was doing nothing, and the
+            // realised corner moved with the sample rate.
+            const float g = 1.0f - std::exp (-kTwoPi * clampf (fc, 0.0f, 0.49f * sr) / sr);
             z = fd (z + g * (x - z));
             return z;
         }

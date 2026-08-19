@@ -105,6 +105,20 @@ void NitedriveProcessor::handleAsyncUpdate()
     setLatencySamples (pendingLatency.load());
 }
 
+void NitedriveProcessor::reset()
+{
+    engine.allNotesOff();
+    phaser.reset();
+    ensemble.reset();
+    delay.reset();
+    output.reset();
+
+    if (oversampler != nullptr)
+        oversampler->reset();
+
+    wasPhaserOn = wasEnsembleOn = wasDelayOn = false;
+}
+
 void NitedriveProcessor::refreshEngineParams()
 {
     auto osc = [] (nd::EngineParams::OscParams& o, const ndp::Refs::Osc& r)
@@ -183,6 +197,7 @@ void NitedriveProcessor::refreshEngineParams()
     }
 
     engine.setNumVoices (getInt (refs.numVoices, 12));
+    engine.setBendRange (params.pitchBendRange);
 }
 
 void NitedriveProcessor::applyMidiEvent (const juce::MidiMessage& m)
@@ -191,10 +206,17 @@ void NitedriveProcessor::applyMidiEvent (const juce::MidiMessage& m)
         engine.noteOn (m.getNoteNumber(), m.getFloatVelocity(), params);
     else if (m.isNoteOff())
         engine.noteOff (m.getNoteNumber(), params);
-    else if (m.isAllNotesOff() || m.isAllSoundOff())
-        engine.allNotesOff();
+    else if (m.isAllSoundOff())
+        engine.allNotesOff();              // CC 120: immediate, by specification
+    else if (m.isAllNotesOff())
+        engine.releaseAllNotes();          // CC 123: behaves like note-offs, so it does not click
     else if (m.isPitchWheel())
         engine.setPitchBend ((float) (m.getPitchWheelValue() - 8192) / 8192.0f, params.pitchBendRange);
+    else if (m.isResetAllControllers())
+    {
+        engine.setModWheel (0.0f);
+        engine.setPitchBend (0.0f, params.pitchBendRange);
+    }
     else if (m.isController())
     {
         if (m.getControllerNumber() == 1)
@@ -334,6 +356,16 @@ void NitedriveProcessor::processChunk (juce::AudioBuffer<float>& buffer, juce::M
     const bool ensembleOn = getBool (refs.ensembleOn);
     const bool delayOn = getBool (refs.delayOn);
     const bool pumpOn = getBool (refs.pumpOn);
+
+    // Clear a stage as it comes back on, so it starts from silence rather than
+    // replaying whatever was in its delay lines when it was switched off.
+    if (phaserOn   && ! wasPhaserOn)   phaser.reset();
+    if (ensembleOn && ! wasEnsembleOn) ensemble.reset();
+    if (delayOn    && ! wasDelayOn)    delay.reset();
+
+    wasPhaserOn = phaserOn;
+    wasEnsembleOn = ensembleOn;
+    wasDelayOn = delayOn;
 
     const int phStages = juce::jlimit (2, 12, getInt (refs.phaserStages, 6));
     const float phRate = get (refs.phaserRate, 0.35f);
