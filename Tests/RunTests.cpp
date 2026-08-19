@@ -632,6 +632,131 @@ void reportPerformance()
     }
 }
 
+/** Renders a short note and returns the energy in its first `ms` milliseconds. */
+double onsetEnergy (nd::EngineParams p, double sr, double ms)
+{
+    nd::SynthEngine engine;
+    engine.prepare (sr, 4);
+    engine.noteOn (60, 1.0f, p);
+
+    const int n = (int) (sr * ms / 1000.0);
+    std::vector<float> buf ((size_t) n, 0.0f);
+    engine.render (p, buf.data(), buf.data(), n);
+
+    double e = 0.0;
+    for (float v : buf)
+        e += (double) v * v;
+
+    return e;
+}
+
+/** Parameters have to reach the DSP, not merely be stored in the tree.
+
+    Every ADSR parameter and both LFO shapes were dead for the whole of this
+    engine's first draft: the values were parsed, snapshotted into EngineParams, and
+    then never handed to AdsrEnv or Lfo. Unit tests on the envelope passed, the
+    preset renders passed, and the patches all still made a noise - just the wrong
+    one. These checks assert the parameters change the audio. */
+void testParametersReachTheDsp()
+{
+    section ("Parameters reach the DSP");
+
+    const double sr = 96000.0;
+
+    nd::EngineParams base;
+    base.osc1.wave = nd::Wave::Saw;
+    base.osc1.unison = 1;
+    base.osc2.level = 0.0f;
+    base.cutoff = 18000.0f;
+    base.filterEnv = 0.0f;
+    base.velToAmp = 0.0f;
+    base.analogDrift = 0.0f;
+    base.randomPhase = false;
+    base.ampS = 1.0f;
+    base.ampD = 4.0f;
+
+    // --- amp attack ---
+    nd::EngineParams fast = base; fast.ampA = 0.001f;
+    nd::EngineParams slow = base; slow.ampA = 0.9f;
+
+    const double eFast = onsetEnergy (fast, sr, 40.0);
+    const double eSlow = onsetEnergy (slow, sr, 40.0);
+
+    checkTrue (eFast > eSlow * 20.0,
+               "amp attack time changes the onset",
+               "fast/slow energy ratio " + juce::String (eFast / juce::jmax (eSlow, 1.0e-12), 1));
+
+    // --- mod envelope, via the filter ---
+    nd::EngineParams envFast = base; envFast.filterEnv = 0.9f; envFast.cutoff = 200.0f;
+    envFast.modA = 0.001f; envFast.modD = 2.0f; envFast.modS = 1.0f;
+    nd::EngineParams envSlow = envFast; envSlow.modA = 0.9f;
+
+    const double mFast = onsetEnergy (envFast, sr, 40.0);
+    const double mSlow = onsetEnergy (envSlow, sr, 40.0);
+
+    checkTrue (mFast > mSlow * 2.0,
+               "mod envelope attack changes the filter onset",
+               "fast/slow energy ratio " + juce::String (mFast / juce::jmax (mSlow, 1.0e-12), 2));
+
+    // --- release ---
+    {
+        nd::EngineParams shortRel = base; shortRel.ampR = 0.01f;
+        nd::EngineParams longRel  = base; longRel.ampR = 2.0f;
+
+        auto tailVoices = [&sr] (nd::EngineParams p)
+        {
+            nd::SynthEngine e;
+            e.prepare (sr, 4);
+            e.noteOn (60, 1.0f, p);
+            std::vector<float> b ((size_t) 4096, 0.0f);
+            for (int i = 0; i < 24; ++i) e.render (p, b.data(), b.data(), 4096);
+            e.noteOff (60, p);
+            for (int i = 0; i < 24; ++i) e.render (p, b.data(), b.data(), 4096);   // ~1 s
+            return e.getActiveVoiceCount();
+        };
+
+        checkTrue (tailVoices (shortRel) == 0 && tailVoices (longRel) > 0,
+                   "amp release time changes how long the voice sounds");
+    }
+
+    // --- LFO shape ---
+    {
+        auto renderShape = [&sr] (nd::LfoShape shape)
+        {
+            nd::EngineParams p;
+            p.osc1.wave = nd::Wave::Saw; p.osc1.unison = 1; p.osc2.level = 0.0f;
+            p.ampA = 0.001f; p.ampS = 1.0f; p.ampD = 8.0f;
+            p.velToAmp = 0.0f; p.analogDrift = 0.0f; p.randomPhase = false;
+            p.cutoff = 800.0f; p.resonance = 0.3f;
+            p.lfo1Shape = shape;
+            p.lfo1Rate = 6.0f;
+            p.lfo1Retrig = true;
+            p.mod[0] = { nd::ModSource::Lfo1, nd::ModDest::Cutoff, 0.9f };
+
+            nd::SynthEngine e;
+            e.prepare (sr, 4);
+            e.noteOn (48, 1.0f, p);
+
+            const int n = (int) (sr * 0.4);
+            std::vector<float> b ((size_t) n, 0.0f);
+            e.render (p, b.data(), b.data(), n);
+            return b;
+        };
+
+        const auto sine = renderShape (nd::LfoShape::Sine);
+        const auto square = renderShape (nd::LfoShape::Square);
+
+        double diff = 0.0;
+        for (size_t i = 0; i < sine.size(); ++i)
+            diff += std::abs ((double) sine[i] - (double) square[i]);
+        diff /= (double) sine.size();
+
+        checkTrue (diff > 1.0e-3,
+                   "LFO shape changes the modulation",
+                   "mean |sine - square| = " + juce::String (diff, 6));
+    }
+}
+
 /** Minimal host so the preset bank can be checked against the real parameter layout
     without pulling in the plugin wrapper. */
 class TestHost : public juce::AudioProcessor
@@ -673,13 +798,13 @@ void testPresets()
 
     // Every preset must name real parameters and stay inside their ranges, otherwise
     // loading it silently clamps and the patch does not sound as authored.
-    bool allIdsValid = true;
+    int unresolvedIds = 0;
     bool allInRange = true;
-    juce::String badId, badRange;
+    juce::String badRange;
 
     for (int i = 0; i < ndp::getNumPresets(); ++i)
     {
-        ndp::applyPreset (host.apvts, i);
+        unresolvedIds += ndp::applyPreset (host.apvts, i);
 
         for (auto* param : host.getParameters())
         {
@@ -698,7 +823,8 @@ void testPresets()
                    "preset " + juce::String (i) + " has a name: " + ndp::getPresetName (i));
     }
 
-    checkTrue (allIdsValid, "every preset id exists in the layout", badId);
+    checkTrue (unresolvedIds == 0, "every preset id exists in the layout",
+               juce::String (unresolvedIds) + " unresolved");
     checkTrue (allInRange, "every preset value is finite after loading", badRange);
 
     // State round-trip: every parameter must come back with the value it went out
@@ -894,6 +1020,7 @@ int main()
     testEnvelope();
     testEngine();
     testGlide();
+    testParametersReachTheDsp();
     testPresets();
     testPresetAudio();
     reportPerformance();

@@ -85,8 +85,7 @@ public:
             dcBlock.reset();
         }
 
-        osc1.setSize (p.osc1.unison);
-        osc2.setSize (p.osc2.unison);
+        applyBlockParams (p);
 
         if (! retrigger || p.lfo1Retrig) lfo1.reset (0.0f);
         if (! retrigger || p.lfo2Retrig) lfo2.reset (0.0f);
@@ -109,6 +108,26 @@ public:
     }
 
     void setPressure (float v) noexcept { pressure = clampf (v, 0.0f, 1.0f); }
+
+    /** Pushes the parameters that only change between blocks into the sub-modules.
+
+        Called once per block by the engine and again on note start. Without this the
+        envelopes and LFOs quietly keep their constructor defaults no matter what the
+        patch says - which is exactly what happened until a review caught it. */
+    void applyBlockParams (const EngineParams& p) noexcept
+    {
+        ampEnv.setParams (p.ampA, p.ampD, p.ampS, p.ampR);
+        modEnv.setParams (p.modA, p.modD, p.modS, p.modR);
+
+        lfo1.setShape (p.lfo1Shape);
+        lfo2.setShape (p.lfo2Shape);
+
+        osc1.setSize (p.osc1.unison);
+        osc2.setSize (p.osc2.unison);
+
+        filter.setMode (p.filterMode);
+        filterR.setMode (p.filterMode);
+    }
 
     /** Renders one oversampled sample and adds it to the stereo accumulators. */
     void render (const EngineParams& p,
@@ -257,9 +276,6 @@ public:
             l = preDriveL.process (p.preDriveType, l, preD);
             r = preDriveR.process (p.preDriveType, r, preD);
         }
-
-        filter.setMode (p.filterMode);
-        filterR.setMode (p.filterMode);
 
         const float cutoff = cutoffFor (p, e2, basePitch);
         const float res = clampf (p.resonance + bus[ModDest::Resonance], 0.0f, 1.0f);

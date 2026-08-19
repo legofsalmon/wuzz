@@ -46,6 +46,12 @@ public:
 
     void noteOn() noexcept
     {
+        if (killing)
+        {
+            killing = false;
+            recalc();
+        }
+
         stage = Stage::Attack;
     }
 
@@ -55,10 +61,14 @@ public:
             stage = Stage::Release;
     }
 
-    /** Fast fade for voice stealing, so a reassigned voice never clicks. */
-    void kill (float seconds = 0.005f) noexcept
+    /** Fast fade for voice stealing, so a reassigned voice never clicks.
+
+        The short time is held in a flag rather than written over `rel`, because the
+        engine pushes the patch's release time in every block - which would otherwise
+        cancel the fade a fraction of a millisecond after it started. */
+    void kill() noexcept
     {
-        rel = seconds;
+        killing = true;
         recalc();
         stage = Stage::Release;
     }
@@ -87,7 +97,12 @@ public:
 
             case Stage::Release:
                 level = releaseBase + level * releaseCoef;
-                if (level <= 1.0e-5f) { level = 0.0f; stage = Stage::Idle; }
+                if (level <= 1.0e-5f)
+                {
+                    level = 0.0f;
+                    stage = Stage::Idle;
+                    killing = false;
+                }
                 break;
 
             case Stage::Idle:
@@ -121,9 +136,12 @@ private:
         decayCoef   = coefFor (dcy, ratioDR);
         decayBase   = (sus - ratioDR) * (1.0f - decayCoef);
 
-        releaseCoef = coefFor (rel, ratioDR);
+        const float releaseTime = killing ? kKillSeconds : rel;
+        releaseCoef = coefFor (releaseTime, ratioDR);
         releaseBase = -ratioDR * (1.0f - releaseCoef);
     }
+
+    static constexpr float kKillSeconds = 0.005f;
 
     float sr = 48000.0f;
     float atk = 0.005f, dcy = 0.2f, sus = 0.7f, rel = 0.1f;
@@ -132,6 +150,7 @@ private:
     float releaseCoef = 0.0f, releaseBase = 0.0f;
     float level = 0.0f;
     Stage stage = Stage::Idle;
+    bool killing = false;
 };
 
 } // namespace nd

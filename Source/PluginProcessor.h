@@ -56,6 +56,7 @@ private:
     void refreshEngineParams();
     void applyMidiEvent (const juce::MidiMessage&);
     void renderEngine (float* left, float* right, int numBaseSamples, juce::MidiBuffer& midi);
+    void processChunk (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     void setQuality (int index);
     void handleAsyncUpdate() override;
 
@@ -80,6 +81,13 @@ private:
     int maxBlockSize = 512;
 
     juce::SmoothedValue<float> outputGain;
+
+    /** Pre-allocated stereo scratch for mono hosts. Sizing a buffer inside
+        processBlock would be a heap allocation on the audio thread. */
+    juce::AudioBuffer<float> monoScratch;
+
+    /** Reused when splitting an oversized block, so the split path allocates nothing. */
+    juce::MidiBuffer chunkMidi;
 
     // Transport state, refreshed per block and used by the tempo-locked stages.
     double hostBpm = 120.0;

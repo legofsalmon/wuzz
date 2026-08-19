@@ -132,6 +132,11 @@ public:
     /** Adds `numSamples` of output into L and R. Both run at the oversampled rate. */
     void render (const EngineParams& p, float* L, float* R, int numSamples) noexcept
     {
+        // Block-rate parameters have to reach the voices somehow; doing it here keeps
+        // the per-sample path free of the comparisons.
+        for (int v = 0; v < voiceCount; ++v)
+            voices[(size_t) v].applyBlockParams (p);
+
         for (int i = 0; i < numSamples; ++i)
         {
             float l = 0.0f, r = 0.0f;

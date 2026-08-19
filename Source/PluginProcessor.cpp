@@ -52,6 +52,9 @@ void NitedriveProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     delay.prepare (sampleRate);
     output.prepare (sampleRate);
 
+    monoScratch.setSize (2, maxBlockSize, false, false, true);
+    monoScratch.clear();
+
     outputGain.reset (sampleRate, 0.02);
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (get (refs.outputGain, -6.0f)));
 
@@ -238,10 +241,48 @@ void NitedriveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     juce::ScopedNoDenormals noDenormals;
 
     const int numSamples = buffer.getNumSamples();
-    buffer.clear();
 
     if (numSamples == 0)
         return;
+
+    // The oversampler's buffers are sized in prepareToPlay. A host is entitled to
+    // hand over a larger block than it promised, and the oversampler would happily
+    // run off the end of them, so anything oversized is split into chunks it can
+    // take. Both the buffer view and the MIDI sub-range are allocation free.
+    if (numSamples > maxBlockSize)
+    {
+        int offset = 0;
+
+        while (offset < numSamples)
+        {
+            const int chunk = juce::jmin (maxBlockSize, numSamples - offset);
+
+            juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(),
+                                           buffer.getNumChannels(), offset, chunk);
+
+            chunkMidi.clear();
+            for (const auto meta : midi)
+            {
+                const int pos = meta.samplePosition - offset;
+                if (pos >= 0 && pos < chunk)
+                    chunkMidi.addEvent (meta.getMessage(), pos);
+            }
+
+            processChunk (view, chunkMidi);
+            offset += chunk;
+        }
+
+        midi.clear();
+        return;
+    }
+
+    processChunk (buffer, midi);
+}
+
+void NitedriveProcessor::processChunk (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    const int numSamples = buffer.getNumSamples();
+    buffer.clear();
 
     if (auto* ph = getPlayHead())
     {
@@ -256,16 +297,16 @@ void NitedriveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     setQuality (getInt (refs.quality, 1));
     refreshEngineParams();
 
-    // Ensure a mono host still gets a valid second channel to write into.
+    // A mono host still needs a valid second channel to render into. The scratch is
+    // pre-allocated, so this is a view rather than an allocation.
     const bool mono = buffer.getNumChannels() < 2;
-    juce::AudioBuffer<float> stereo;
+    juce::AudioBuffer<float> stereoView (monoScratch.getArrayOfWritePointers(), 2, 0, numSamples);
     juce::AudioBuffer<float>* work = &buffer;
 
     if (mono)
     {
-        stereo.setSize (2, numSamples, false, false, true);
-        stereo.clear();
-        work = &stereo;
+        stereoView.clear();
+        work = &stereoView;
     }
 
     juce::dsp::AudioBlock<float> block (*work);

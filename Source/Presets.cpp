@@ -239,26 +239,34 @@ juce::String getPresetName (int index)
     return kPresets[index].name;
 }
 
-void applyPreset (juce::AudioProcessorValueTreeState& state, int index)
+int applyPreset (juce::AudioProcessorValueTreeState& state, int index)
 {
     if (index < 0 || index >= kNumPresets)
-        return;
+        return 0;
 
     for (auto* p : state.processor.getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
             ranged->setValueNotifyingHost (ranged->getDefaultValue());
 
     const auto& preset = kPresets[index];
+    int unresolved = 0;
 
     for (int i = 0; i < preset.count; ++i)
     {
         const auto& pv = preset.values[i];
 
         if (auto* p = state.getParameter (pv.id))
+        {
             p->setValueNotifyingHost (p->convertTo0to1 (pv.value));
+        }
         else
+        {
             jassertfalse;   // preset references an id that is not in the layout
+            ++unresolved;
+        }
     }
+
+    return unresolved;
 }
 
 } // namespace ndp
