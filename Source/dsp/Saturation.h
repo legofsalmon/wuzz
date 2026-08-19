@@ -48,7 +48,11 @@ struct ShapeMath
             case DriveType::Soft: return cubicAnti (x);
             case DriveType::Tube: return cubicAnti (x + kTubeBias) - cubic (kTubeBias) * x;
             case DriveType::Hard: return hardAnti (x);
-            case DriveType::Fold: return -6.2831853f * fastCos (x * 0.15915494f);
+            // f(x) = sin(x), so F(x) = -cos(x). fastSin/fastCos take turns rather
+            // than radians, hence the 1/(2*pi) scaling on the argument - but that
+            // scaling must NOT reappear as a factor out front, or F ends up 2*pi
+            // times too large and the ADAA quotient runs 16 dB hot.
+            case DriveType::Fold: return -fastCos (x * 0.15915494f);
             case DriveType::Fuzz: return fuzzAnti (x);
             default:              return 0.5f * x * x;
         }

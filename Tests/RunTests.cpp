@@ -294,6 +294,47 @@ void testFilter()
     }
 }
 
+/** Antiderivative anti-aliasing is only correct if F really is the antiderivative
+    of f. If it is off by a constant factor the drive stage silently runs at the
+    wrong level - and worse, disagrees with its own low-slope fallback branch, which
+    evaluates f directly. A factor of 2*pi (16 dB) shipped in the Fold shaper before
+    this test existed, and every level-based check passed straight through it. */
+void testShaperAntiderivatives()
+{
+    section ("Drive shaper antiderivatives");
+
+    const char* names[] = { "Soft", "Tube", "Hard", "Fold", "Fuzz" };
+
+    for (int t = 0; t < (int) nd::DriveType::NumTypes; ++t)
+    {
+        const auto type = (nd::DriveType) t;
+        double worst = 0.0, worstAt = 0.0;
+
+        for (double x = -6.0; x <= 6.0; x += 0.001)
+        {
+            // The shapers have knees where f is not differentiable; a central
+            // difference straddling one is meaningless, so skip those neighbourhoods.
+            const bool nearKnee = std::abs (std::abs (x) - 1.0) < 0.02
+                               || std::abs (std::abs (x + (double) nd::ShapeMath::kTubeBias) - 1.0) < 0.02;
+            if (nearKnee)
+                continue;
+
+            const double h = 1.0e-4;
+            const double dF = (nd::ShapeMath::F (type, (float) (x + h))
+                             - nd::ShapeMath::F (type, (float) (x - h))) / (2.0 * h);
+            const double f = nd::ShapeMath::f (type, (float) x);
+
+            const double err = std::abs (dF - f);
+            if (err > worst) { worst = err; worstAt = x; }
+        }
+
+        checkBelow (worst, 0.02,
+                    juce::String (names[t]) + ": F is the antiderivative of f (worst at x="
+                        + juce::String (worstAt, 2) + ")",
+                    "");
+    }
+}
+
 void testEnvelope()
 {
     section ("Envelope");
@@ -849,6 +890,7 @@ int main()
     testWaveTables();
     testOscillatorAliasing();
     testFilter();
+    testShaperAntiderivatives();
     testEnvelope();
     testEngine();
     testGlide();
