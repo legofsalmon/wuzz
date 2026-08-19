@@ -23,8 +23,8 @@ cp -R NITEDRIVE.component ~/Library/Audio/Plug-Ins/Components/
 Restart Live and rescan (**Preferences → Plug-Ins → Rescan**). NITEDRIVE appears
 under *Plug-Ins → VST3* (or *Audio Units*) as an instrument.
 
-The binaries are unsigned, so the first load is blocked by Gatekeeper. Clear the
-quarantine flag:
+The binaries are ad-hoc signed, not notarised, so the first load is blocked by
+Gatekeeper. Clear the quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/NITEDRIVE.vst3
@@ -36,6 +36,17 @@ the build is universal, so an Intel Mac or a Rosetta host works too.
 
 > **AU users:** Live caches Audio Unit scans aggressively. If the component does not
 > show up, run `killall -9 AudioComponentRegistrar` and rescan.
+>
+> If macOS still refuses it, the ad-hoc signature did not survive the download. Re-sign
+> in place and rescan:
+>
+> ```bash
+> codesign --force --sign - ~/Library/Audio/Plug-Ins/Components/NITEDRIVE.component
+> codesign --force --sign - ~/Library/Audio/Plug-Ins/VST3/NITEDRIVE.vst3
+> ```
+>
+> You can confirm the AU is loadable the same way macOS does:
+> `auval -v aumu Ntdr Ndrv`
 
 ## Build from source
 

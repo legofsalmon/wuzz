@@ -69,12 +69,42 @@ jobs:
           find build -name "*.component" -maxdepth 6 -exec cp -R {} dist/ \; || true
           ls -R dist
 
-      - name: Verify macOS binary is universal
+      # JUCE ad-hoc signs the VST3 as a side effect of regenerating moduleinfo.json,
+      # but nothing signs the AU. Apple Silicon refuses to load unsigned bundles, so
+      # an unsigned .component fails Audio Unit validation and never shows up in the
+      # host. Sign both explicitly.
+      - name: Ad-hoc sign macOS bundles
         if: runner.os == 'macOS'
         run: |
-          BIN="dist/NITEDRIVE.vst3/Contents/MacOS/NITEDRIVE"
-          lipo -info "$BIN"
-          lipo -info "$BIN" | grep -q "x86_64" && lipo -info "$BIN" | grep -q "arm64"
+          for bundle in dist/NITEDRIVE.vst3 dist/NITEDRIVE.component; do
+            codesign --force --sign - --timestamp=none "$bundle"
+            codesign --verify --verbose=2 "$bundle"
+          done
+
+      - name: Verify macOS bundles are universal and signed
+        if: runner.os == 'macOS'
+        run: |
+          for fmt in vst3 component; do
+            BIN="dist/NITEDRIVE.$fmt/Contents/MacOS/NITEDRIVE"
+            echo "== $fmt =="
+            lipo -info "$BIN"
+            lipo -info "$BIN" | grep -q "x86_64"
+            lipo -info "$BIN" | grep -q "arm64"
+            test -d "dist/NITEDRIVE.$fmt/Contents/_CodeSignature"
+            codesign --verify --strict "dist/NITEDRIVE.$fmt"
+          done
+
+      # auval is what macOS itself runs before a host will list an Audio Unit, so
+      # this is the definitive check that the .component actually loads - including
+      # that its signature is acceptable to Apple Silicon.
+      - name: Validate the Audio Unit with auval
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R dist/NITEDRIVE.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 5
+          auval -v aumu Ntdr Ndrv
 
       - uses: actions/upload-artifact@v4
         with:
