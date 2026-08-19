@@ -219,6 +219,60 @@ jobs:
             fi
           done
 
+      # The installer is built from the signed, notarised bundles, then signed and
+      # notarised itself. Package signing needs a Developer ID *Installer*
+      # certificate, which is a different one from the Application certificate used
+      # on the bundles; without it the package still builds, just unsigned.
+      - name: Build the macOS installer
+        if: runner.os == 'macOS'
+        env:
+          MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*project(NITEDRIVE VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt | head -1)"
+          VERSION="${VERSION:-1.0.0}"
+          ./packaging/macos/build-pkg.sh dist installer "$VERSION"
+          ls -la installer
+
+      - name: Notarise and staple the installer
+        if: runner.os == 'macOS' && env.SIGNED_WITH_DEVELOPER_ID == 'true'
+        env:
+          MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MACOS_INSTALLER_IDENTITY:-}" ]; then
+            echo "::warning::No MACOS_INSTALLER_IDENTITY, so the installer is unsigned and cannot be notarised. Users will have to right-click it and choose Open. See the README for how to add a Developer ID Installer certificate."
+            exit 0
+          fi
+
+          if [ -n "${NOTARY_KEY:-}" ]; then
+            echo "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            AUTH=(--key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+          elif [ -n "${APPLE_ID:-}" ]; then
+            AUTH=(--apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          else
+            echo "::warning::No notarisation credentials - installer left signed but un-notarised."
+            exit 0
+          fi
+
+          PKG="$(ls installer/NITEDRIVE-*.pkg | head -1)"
+
+          # A .pkg is submitted directly; unlike a bundle it needs no zipping.
+          xcrun notarytool submit "$PKG" "${AUTH[@]}" --wait --timeout 30m
+          xcrun stapler staple "$PKG"
+          xcrun stapler validate "$PKG"
+          spctl --assess --type install -vv "$PKG" || true
+
+          rm -f "$RUNNER_TEMP/notary.p8"
+          echo "::notice::Installer notarised and stapled."
+
       # auval is what macOS itself runs before a host will list an Audio Unit, so
       # this is the definitive check that the .component actually loads - including
       # that its signature is acceptable to Apple Silicon.
@@ -235,6 +289,14 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: dist
+          if-no-files-found: error
+
+      - name: Upload the installer
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nitedrive-macos-installer
+          path: installer
           if-no-files-found: error
 
   validate:

@@ -40,8 +40,17 @@ identity)
         exit 1
     fi
     echo
-    echo "MACOS_SIGNING_IDENTITY is the quoted part, without the quotes, e.g."
+    echo
+    echo "Installer certificates (for signing the .pkg):"
+    echo
+    security find-identity -v | grep "Developer ID Installer" \
+        || echo "  none found - the installer will be built unsigned."
+    echo
+    echo "MACOS_SIGNING_IDENTITY is the quoted part of the Application line, e.g."
     echo "  Developer ID Application: Your Name (ABCDE12345)"
+    echo
+    echo "MACOS_INSTALLER_IDENTITY is the quoted part of the Installer line, e.g."
+    echo "  Developer ID Installer: Your Name (ABCDE12345)"
     echo
     echo "The 10 characters in the parentheses are also your APPLE_TEAM_ID."
     ;;

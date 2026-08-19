@@ -12,16 +12,32 @@ saturation are written from scratch and measured.
 
 ## Install (macOS)
 
-Download the `nitedrive-macos-universal` artefact from the latest
-[Actions run](../../actions), unzip it, then:
+Download **`nitedrive-macos-installer`** from the latest
+[Actions run](../../actions) — artefacts are listed at the bottom of the *run
+summary* page, not on the individual job pages — and open the `.pkg`.
 
-```bash
-cp -R NITEDRIVE.vst3     ~/Library/Audio/Plug-Ins/VST3/
-cp -R NITEDRIVE.component ~/Library/Audio/Plug-Ins/Components/
+It installs into the system-wide folders every host scans:
+
+```
+/Library/Audio/Plug-Ins/VST3/NITEDRIVE.vst3
+/Library/Audio/Plug-Ins/Components/NITEDRIVE.component
 ```
 
-Restart Live and rescan (**Preferences → Plug-Ins → Rescan**). NITEDRIVE appears
-under *Plug-Ins → VST3* (or *Audio Units*) as an instrument.
+You can choose which formats to install. If an older copy is sitting in your own
+`~/Library/Audio/Plug-Ins`, the installer moves it aside rather than leave two
+versions on the scan path — renamed with a timestamp, not deleted. It also prods
+macOS to rescan Audio Units, so the AU shows up without a reboot.
+
+Then rescan in Live (**Preferences → Plug-Ins → Rescan**). NITEDRIVE appears under
+*Plug-Ins* as an instrument.
+
+If you would rather place the files yourself, `nitedrive-macos-universal` holds the
+bare bundles:
+
+```bash
+cp -R NITEDRIVE.vst3      ~/Library/Audio/Plug-Ins/VST3/
+cp -R NITEDRIVE.component ~/Library/Audio/Plug-Ins/Components/
+```
 
 If the build was signed and notarised (see
 [Signing and notarisation](#signing-and-notarisation)), that is all you need to do.
@@ -82,6 +98,19 @@ Set the results under **Settings → Secrets and variables → Actions**.
 Note it must be a **Developer ID Application** certificate, not *Apple Development*
 or *Apple Distribution* — only Developer ID is valid for software shipped outside
 the App Store.
+
+**Installer signing** (optional, one secret):
+
+| Secret | What it is |
+|--------|-----------|
+| `MACOS_INSTALLER_IDENTITY` | e.g. `Developer ID Installer: Your Name (ABCDE12345)` |
+
+Note this is a **Developer ID Installer** certificate — a *different* one from the
+Developer ID Application certificate that signs the bundles. Create it the same way
+(Xcode → Settings → Accounts → Manage Certificates → **+**), and it lands in the
+same keychain, so `./tools/signing-secrets.sh identity` lists both. Without it the
+package still builds and installs; macOS just warns on first open and the user has
+to right-click → Open.
 
 **Notarisation** — pick one of these two sets:
 
