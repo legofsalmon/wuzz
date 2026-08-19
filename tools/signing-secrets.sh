@@ -9,6 +9,7 @@
 #   ./tools/signing-secrets.sh identity          list Developer ID certificates
 #   ./tools/signing-secrets.sh cert  <file.p12>  copy MACOS_CERTIFICATE
 #   ./tools/signing-secrets.sh notary <file.p8>  copy NOTARY_KEY, show NOTARY_KEY_ID
+#   ./tools/signing-secrets.sh verify <file.p12> check the password before you paste
 #
 set -euo pipefail
 
@@ -45,6 +46,38 @@ identity)
     echo "The 10 characters in the parentheses are also your APPLE_TEAM_ID."
     ;;
 
+verify)
+    P12="${2:-}"
+    [ -n "$P12" ] || die "usage: $0 verify <file.p12>"
+    [ -f "$P12" ] || die "no such file: $P12"
+
+    # CI cannot tell a wrong password from a mangled secret - both surface as
+    # "MAC verification failed" - so check both here, before anything is pasted.
+    printf "Password for %s: " "$(basename "$P12")"
+    read -rs PW
+    echo
+
+    if openssl pkcs12 -info -in "$P12" -noout -passin pass:"$PW" >/dev/null 2>&1; then
+        echo "  password OK"
+    else
+        echo "  password REJECTED - this is what CI will report as 'MAC verification failed'."
+        echo
+        echo "  If you are sure it is right, the .p12 may have been exported empty:"
+        echo "  re-export from Keychain Access (My Certificates -> right-click -> Export)."
+        exit 1
+    fi
+
+    if base64 -i "$P12" | base64 -d 2>/dev/null | cmp -s - "$P12"; then
+        echo "  base64 round-trips cleanly"
+    else
+        echo "  WARNING: base64 does not round-trip on this machine."
+    fi
+
+    echo
+    echo "Safe to paste. MACOS_CERTIFICATE_PWD is the password you just entered -"
+    echo "make sure the secret has no trailing space or newline."
+    ;;
+
 cert)
     P12="${2:-}"
     [ -n "$P12" ] || die "usage: $0 cert <file.p12>"
@@ -75,7 +108,7 @@ notary)
     ;;
 
 *)
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

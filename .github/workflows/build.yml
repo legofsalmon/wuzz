@@ -102,13 +102,41 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
 
-          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PWD" \
-            -T /usr/bin/codesign -T /usr/bin/security
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12" 2>/dev/null || true
+
+          # A truncated secret and a wrong password produce the same opaque Apple
+          # error ("MAC verification failed"), so rule out the container first.
+          if [ ! -s "$RUNNER_TEMP/cert.p12" ]; then
+            echo "::error::MACOS_CERTIFICATE decoded to an empty file. The base64 is truncated or malformed - re-copy it with: base64 -i YourCert.p12 | pbcopy"
+            exit 1
+          fi
+
+          # PKCS#12 is DER, which always starts with a SEQUENCE tag (0x30).
+          if [ "$(head -c 1 "$RUNNER_TEMP/cert.p12" | xxd -p)" != "30" ]; then
+            echo "::error::MACOS_CERTIFICATE does not decode to a PKCS#12 container. Check you copied the base64 of the .p12 itself, whole and with no extra characters."
+            exit 1
+          fi
+
+          if ! security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PWD" \
+                 -T /usr/bin/codesign -T /usr/bin/security 2> "$RUNNER_TEMP/import.err"; then
+            echo "::error::Could not import the signing certificate. Apple reported:"
+            sed 's/^/    /' "$RUNNER_TEMP/import.err"
+            echo "::error::The usual cause is MACOS_CERTIFICATE_PWD not matching the password set when the .p12 was exported - a trailing space or newline in the secret is enough to break it. Check the pair locally with: ./tools/signing-secrets.sh verify YourCert.p12"
+            rm -f "$RUNNER_TEMP/cert.p12"
+            exit 1
+          fi
+
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
           security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
           rm -f "$RUNNER_TEMP/cert.p12"
+
+          # Fail loudly here rather than letting codesign emit its own vague error.
+          if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -qF "$SIGN_ID"; then
+            echo "::error::MACOS_SIGNING_IDENTITY does not match any certificate in the imported keychain. It must be the exact identity string, e.g. 'Developer ID Application: Your Name (ABCDE12345)'. Available:"
+            security find-identity -v -p codesigning "$KEYCHAIN" | sed 's/^/    /'
+            exit 1
+          fi
 
           # --options runtime enables the hardened runtime, without which Apple will
           # reject the notarisation submission.
