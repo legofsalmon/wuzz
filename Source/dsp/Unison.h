@@ -90,8 +90,13 @@ public:
         {
             const float off = kSpread[idx[i]];
             const float inc = clampf (baseInc * (1.0f + off * d), 1.0e-6f, 0.45f);
+            // The inner pair replaces a centre voice AND its own two side slots, and
+            // detuned copies add in power, not amplitude - a plain gC/2 leaves even
+            // counts ~4.5 dB under their odd neighbours at working detunes. The
+            // power-correct blend is exact for decorrelated copies and still lands on
+            // gC/2 near zero detune where gS is negligible.
             const float g   = (off == 0.0f)              ? gC
-                            : (i == innerA || i == innerB) ? 0.5f * gC
+                            : (i == innerA || i == innerB) ? std::sqrt (0.5f * gC * gC + gS * gS)
                                                            : gS;
 
             const float v = oscs[i].process (t, inc, wave, pw, syncSince, syncUntil) * g;

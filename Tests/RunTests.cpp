@@ -9,6 +9,7 @@
 #include <JuceHeader.h>
 
 #include <chrono>
+#include <sstream>
 
 #include "Params.h"
 #include "Presets.h"
@@ -384,6 +385,51 @@ void testEnvelope()
     checkTrue (! env.isActive(), "release reaches idle so the voice can be freed");
     checkWithin (releaseSamples / sr, 0.2, 0.12, "release time is in range", "s");
     checkTrue (env.getLevel() == 0.0f, "envelope lands on exactly zero (no denormal tail)");
+}
+
+/** A mono-voiced patch must produce bit-identical channels at ANY engine rate.
+
+    The right channel's filter and DC blocker ran with 48 kHz defaults for the
+    project's whole life because every test rendered at exactly 48 kHz - the one
+    rate where the mistuning is invisible. Three review agents found it
+    independently. This test renders at rates where the bug screams. */
+void testStereoSymmetry()
+{
+    section ("Stereo symmetry");
+
+    for (double sr : { 88200.0, 96000.0, 192000.0 })
+    {
+        nd::SynthEngine engine;
+        engine.prepare (sr, 4);
+
+        nd::EngineParams p;
+        p.osc1.unison = 1;
+        p.osc1.spread = 0.0f;
+        p.osc2.level = 0.0f;
+        p.cutoff = 800.0f;
+        p.resonance = 0.6f;
+        p.filterDrive = 6.0f;
+        p.filterEnv = 0.5f;
+        p.preDrive = 4.0f;
+        p.postDrive = 3.0f;
+        p.ampA = 0.001f; p.ampS = 1.0f;
+        p.velToAmp = 0.0f;
+        p.analogDrift = 0.0f;
+        p.randomPhase = false;
+
+        const int n = (int) sr / 2;
+        std::vector<float> L ((size_t) n, 0.0f), R ((size_t) n, 0.0f);
+
+        engine.noteOn (45, 1.0f, p);
+        engine.render (p, L.data(), R.data(), n);
+
+        float worst = 0.0f;
+        for (int i = 0; i < n; ++i)
+            worst = juce::jmax (worst, std::abs (L[(size_t) i] - R[(size_t) i]));
+
+        checkBelow (worst, 1.0e-6, "mono patch renders identical channels at "
+                        + juce::String (sr / 1000.0, 1) + " kHz", "");
+    }
 }
 
 void testEngine()
@@ -1065,15 +1111,20 @@ const NotePlan kPlans[] = {
     { "Juno Pad",      { 48, 55, 60, 64 }, 2.0, 4.5 },
     { "Pump Saws",     { 45, 52, 57 },     1.5, 3.5 },
     { "Sub Thump",     { 33 },             0.25, 2.0 },
-    { "Noise Sweep",   { 48 },             2.0, 4.0 }
+    { "Noise Sweep",   { 48 },             2.0, 4.0 },
+    { "Electro Clap",  { 60 },             0.1, 2.0 },
+    { "Compute Bleep", { 69 },             0.15, 2.5 }
 };
 
-void dump()
+void dump (std::ostream& json)
 {
     TestHost host;
-    const double sr = 48000.0;
+    // The shipping default is High quality: voices at 2x the host rate. Measuring at
+    // the voice rate (FX are rate-aware) keeps the nonlinear clamps and filter
+    // behaviour the same as what users hear.
+    const double sr = 96000.0;
 
-    std::cout << "[" << std::endl;
+    json << "[" << std::endl;
 
     for (int i = 0; i < ndp::getNumPresets(); ++i)
     {
@@ -1178,6 +1229,7 @@ void dump()
         const int gate  = (int) (sr * plan.gateSeconds);
 
         std::vector<float> L ((size_t) total, 0.0f), R ((size_t) total, 0.0f);
+        std::vector<float> dryL ((size_t) total, 0.0f);
 
         for (int note : plan.notes)
             engine.noteOn (note, 0.9f, p);
@@ -1194,6 +1246,11 @@ void dump()
                     engine.noteOff (note, p);
 
             engine.render (p, &L[(size_t) pos], &R[(size_t) pos], block);
+
+            // Attack/release are properties of the patch, not of its delay tail or
+            // pump duck, so the envelope metrics read the dry engine output.
+            for (int s2 = 0; s2 < block; ++s2)
+                dryL[(size_t) (pos + s2)] = L[(size_t) (pos + s2)];
 
             for (int s2 = 0; s2 < block; ++s2)
             {
@@ -1231,7 +1288,7 @@ void dump()
         {
             double acc = 0.0;
             for (int s2 = 0; s2 < envWin; ++s2)
-                acc += (double) L[(size_t) (w + s2)] * L[(size_t) (w + s2)];
+                acc += (double) dryL[(size_t) (w + s2)] * dryL[(size_t) (w + s2)];
             env.push_back (std::sqrt (acc / envWin));
         }
 
@@ -1243,10 +1300,14 @@ void dump()
         for (size_t e = 0; e < env.size(); ++e)
             if (env[e] >= 0.9 * envPeak) { attackMs = e * 2.0; break; }
 
-        const size_t gateWin = (size_t) (gate / envWin);
+        // Release measured from the level AT note-off; a patch that already decayed
+        // to silence reports null (-1) instead of a misleading 0.
+        const size_t gateWin = juce::jmin (env.size() - 1, (size_t) (gate / envWin));
         double releaseMs = -1.0;
-        for (size_t e = gateWin; e < env.size(); ++e)
-            if (env[e] < envPeak * 0.01) { releaseMs = (e - gateWin) * 2.0; break; }
+        const double offLevel = env[gateWin];
+        if (offLevel > envPeak * 0.02)
+            for (size_t e = gateWin; e < env.size(); ++e)
+                if (env[e] < offLevel * 0.01) { releaseMs = (e - gateWin) * 2.0; break; }
 
         float peak = 0.0f;
         double rms = 0.0;
@@ -1263,40 +1324,61 @@ void dump()
         rms = std::sqrt (rms / juce::jmax (1, rmsN));
         const double corr = corrLR / juce::jmax (1e-12, std::sqrt (pL * pR));
 
-        // Spectrum over the sustain (or the whole stab).
-        const int fftStart = plan.gateSeconds < 0.5 ? 0 : (int) (sr * 0.4);
+        // Spectrum window sized to the sound: a stab is measured over its body plus a
+        // little tail (zero-padded), a sustained patch over the settled middle of its
+        // gate - not a fixed window that mostly covers silence.
+        int fftStart, fftLen;
+        if (plan.gateSeconds < 0.5)
+        {
+            fftStart = 0;
+            fftLen = juce::jmin (kFftSize, (int) (sr * (plan.gateSeconds + 0.3)));
+        }
+        else
+        {
+            fftStart = (int) (sr * juce::jmin (0.4, plan.gateSeconds * 0.25));
+            fftLen = juce::jmin (kFftSize, gate - fftStart);
+        }
+
         juce::dsp::FFT fft (kFftOrder);
         std::vector<float> spec ((size_t) kFftSize * 2, 0.0f);
-        const auto win = blackmanHarris (kFftSize);
-        for (int s2 = 0; s2 < kFftSize && fftStart + s2 < total; ++s2)
+        const auto win = blackmanHarris (fftLen);
+        for (int s2 = 0; s2 < fftLen && fftStart + s2 < total; ++s2)
             spec[(size_t) s2] = L[(size_t) (fftStart + s2)] * win[(size_t) s2];
         fft.performFrequencyOnlyForwardTransform (spec.data());
 
+        // Infrasound is reported as its own band rather than silently absorbed into
+        // "sub" - un-guarded, it manufactured a false review finding. Analysis stops
+        // at 20 kHz so the 96 kHz render's ultrasonic content can't skew ratios.
         const double binHz = sr / (double) kFftSize;
         double centroidNum = 0.0, centroidDen = 0.0;
-        double eSub = 0.0, eBass = 0.0, eMid = 0.0, eHigh = 0.0, eAir = 0.0;
+        double eInf = 0.0, eSub = 0.0, eBass = 0.0, eMid = 0.0, eHigh = 0.0, eAir = 0.0;
         for (int b = 1; b < kFftSize / 2; ++b)
         {
             const double f = b * binHz;
+            if (f > 20000.0)
+                break;
+
             const double pw = (double) spec[(size_t) b] * spec[(size_t) b];
-            centroidNum += f * pw; centroidDen += pw;
-            if      (f < 120.0)  eSub  += pw;
+            if (f >= 20.0) { centroidNum += f * pw; centroidDen += pw; }
+            if      (f < 20.0)   eInf  += pw;
+            else if (f < 120.0)  eSub  += pw;
             else if (f < 350.0)  eBass += pw;
             else if (f < 2000.0) eMid  += pw;
             else if (f < 6000.0) eHigh += pw;
             else                 eAir  += pw;
         }
-        const double eTot = juce::jmax (1e-30, eSub + eBass + eMid + eHigh + eAir);
+        const double eTot = juce::jmax (1e-30, eInf + eSub + eBass + eMid + eHigh + eAir);
 
         auto db = [] (double v) { return 20.0 * std::log10 (juce::jmax (1e-12, v)); };
 
-        std::cout << "  {\"preset\": \"" << plan.name << "\""
+        json << "  {\"preset\": \"" << plan.name << "\""
                   << ", \"peak_db\": "   << juce::String (db (peak), 1)
                   << ", \"rms_db\": "    << juce::String (db (rms), 1)
                   << ", \"crest_db\": "  << juce::String (db (peak) - db (rms), 1)
                   << ", \"attack_ms\": " << juce::String (attackMs, 0)
                   << ", \"release_ms\": " << juce::String (releaseMs, 0)
                   << ", \"centroid_hz\": " << juce::String (centroidDen > 0 ? centroidNum / centroidDen : 0.0, 0)
+                  << ", \"infra_pct\": " << juce::String (100.0 * eInf / eTot, 1)
                   << ", \"sub_pct\": "   << juce::String (100.0 * eSub / eTot, 1)
                   << ", \"bass_pct\": "  << juce::String (100.0 * eBass / eTot, 1)
                   << ", \"mid_pct\": "   << juce::String (100.0 * eMid / eTot, 1)
@@ -1306,10 +1388,62 @@ void dump()
                   << "}" << (i + 1 < ndp::getNumPresets() ? "," : "") << std::endl;
     }
 
-    std::cout << "]" << std::endl;
+    json << "]" << std::endl;
 }
 
+inline void dump() { dump (std::cout); }
+
 } // namespace features
+
+/** The preset bank is a product surface: browsing it at fixed monitor level must
+    not jump between too-hot and inaudible. Renders every preset through the full
+    chain (the features::dump path) and holds the bank to a peak window. The review
+    that motivated this measured a 12.4 dB peak spread with the pad louder than the
+    lead. */
+void testBankGainStaging()
+{
+    section ("Preset bank gain staging");
+
+    std::ostringstream oss;
+    features::dump (oss);
+
+    const auto parsed = juce::JSON::parse (juce::String (oss.str()));
+    const auto* arr = parsed.getArray();
+
+    checkTrue (arr != nullptr && arr->size() == ndp::getNumPresets(),
+               "feature dump renders every preset",
+               arr ? juce::String (arr->size()) : "parse failed");
+
+    if (arr == nullptr)
+        return;
+
+    double lo = 0.0, hi = -200.0;
+    juce::String loName, hiName;
+    bool infraOk = true;
+    juce::String infraName;
+
+    for (const auto& v : *arr)
+    {
+        const double peak = (double) v.getProperty ("peak_db", -200.0);
+        const auto name = v.getProperty ("preset", "?").toString();
+
+        if (peak < lo || lo == 0.0) { lo = peak; loName = name; }
+        if (peak > hi) { hi = peak; hiName = name; }
+
+        // Sustained inaudible output eats headroom and endangers subwoofers. The
+        // measured worst offender before the fix was 50% of ALL rendered energy.
+        const double infra = (double) v.getProperty ("infra_pct", 0.0);
+        if (infra > 15.0) { infraOk = false; infraName = name + " " + juce::String (infra, 1) + "%"; }
+    }
+
+    checkTrue (hi <= -2.0 && lo >= -12.0,
+               "every preset peaks inside the -12..-2 dBFS window",
+               "range " + juce::String (lo, 1) + " (" + loName + ") .. "
+                   + juce::String (hi, 1) + " (" + hiName + ")");
+    checkBelow (hi - lo, 8.0, "bank peak spread", "dB");
+    checkTrue (infraOk, "no preset spends >15% of its energy below 20 Hz", infraName);
+}
+
 
 } // namespace
 
@@ -1329,12 +1463,14 @@ int main()
     testOscillatorAliasing();
     testFilter();
     testShaperAntiderivatives();
+    testStereoSymmetry();
     testEnvelope();
     testEngine();
     testGlide();
     testParametersReachTheDsp();
     testPresets();
     testPresetAudio();
+    testBankGainStaging();
     reportPerformance();
 
     std::cout << "\n" << (checks - failures) << "/" << checks << " checks passed" << std::endl;

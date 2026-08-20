@@ -46,16 +46,46 @@ public:
 
     void setMode (FilterMode m) noexcept { mode = m; }
 
-    /** @param cutoffHz   in Hz, clamped internally
-        @param resonance  0..1, where 1 is just into self-oscillation
-        @param drive      loop drive, 1 = clean */
-    float process (float x, float cutoffHz, float resonance, float drive) noexcept
+    /** Per-sample coefficients. Everything here depends only on the control inputs
+        and the sample rate, never on the filter state, so a stereo pair shares one
+        set - which also makes it structurally impossible for the two channels to be
+        tuned differently, the bug this refactor exists to bury. */
+    struct Coeffs
     {
-        const float fc = clampf (cutoffHz, 10.0f, maxCutoff);
-        const float G  = poleGain (fc);
+        float G = 0.0f, k = 0.0f;
+        float driveIn = 1.0f, driveInv = 1.0f, makeup = 1.5f;
+    };
+
+    Coeffs makeCoeffs (float cutoffHz, float resonance, float drive) noexcept
+    {
+        Coeffs c;
+        c.G = poleGain (clampf (cutoffHz, 10.0f, maxCutoff));
 
         // 4 lets the loop self-oscillate; a touch beyond keeps it singing.
-        const float k = clampf (resonance, 0.0f, 1.0f) * 4.2f;
+        c.k = clampf (resonance, 0.0f, 1.0f) * 4.2f;
+
+        if (drive != cachedDrive)
+        {
+            cachedDrive = drive;
+            const float d = clampf (drive, 1.0f, 60.0f);
+            cachedDriveIn = d;
+            cachedDriveInv = 1.0f / d;
+            // Makeup restores the level the saturator takes away. It is applied to the
+            // mixed output, which is downstream of the state updates, so it scales what
+            // you hear without touching the loop gain that sets the tuning.
+            cachedMakeup = d / ShapeMath::softClipUnity (d);
+        }
+
+        c.driveIn = cachedDriveIn;
+        c.driveInv = cachedDriveInv;
+        c.makeup = cachedMakeup;
+        return c;
+    }
+
+    /** Runs one sample through this instance's state with prebuilt coefficients. */
+    float processWith (const Coeffs& c, float x) noexcept
+    {
+        const float G = c.G;
 
         const float g1 = 1.0f - G;
         const float d1 = g1 * s1;
@@ -69,7 +99,7 @@ public:
 
         const float B = G3 * d1 + G2 * d2 + G * d3 + d4;
 
-        float u = (x - k * B) / (1.0f + k * G4);
+        float u = (x - c.k * B) / (1.0f + c.k * G4);
 
         // The ladder's own nonlinearity sits at the loop input.
         //
@@ -79,26 +109,35 @@ public:
         // flat - measured at -0.9% at 440 Hz rising to -12.8% at 10 kHz. Exact
         // self-oscillation tuning is worth more here than the ~2 dB of alias rejection
         // it would have bought, since the drive stages already dominate that number.
-        if (drive != cachedDrive)
-        {
-            cachedDrive = drive;
-            const float d = clampf (drive, 1.0f, 60.0f);
-            driveIn = d;
-            driveInv = 1.0f / d;
-            // Makeup restores the level the saturator takes away. It is applied to the
-            // mixed output, which is downstream of the state updates, so it scales what
-            // you hear without touching the loop gain that sets the tuning.
-            makeup = d / ShapeMath::softClipUnity (d);
-        }
-
-        u = ShapeMath::softClipUnity (u * driveIn) * driveInv;
+        u = ShapeMath::softClipUnity (u * c.driveIn) * c.driveInv;
 
         const float y1 = G * u  + d1;  s1 = fd (y1 + G * (u  - s1));
         const float y2 = G * y1 + d2;  s2 = fd (y2 + G * (y1 - s2));
         const float y3 = G * y2 + d3;  s3 = fd (y3 + G * (y2 - s3));
         const float y4 = G * y3 + d4;  s4 = fd (y4 + G * (y3 - s4));
 
-        return mix (u, y1, y2, y3, y4) * makeup;
+        return mix (u, y1, y2, y3, y4) * c.makeup;
+    }
+
+    /** @param cutoffHz   in Hz, clamped internally
+        @param resonance  0..1, where 1 is just into self-oscillation
+        @param drive      loop drive, 1 = clean */
+    float process (float x, float cutoffHz, float resonance, float drive) noexcept
+    {
+        return processWith (makeCoeffs (cutoffHz, resonance, drive), x);
+    }
+
+    /** Stereo pair through shared coefficients: the tan approximation, resonance
+        scaling and drive cache run once instead of twice, and both channels are
+        guaranteed identically tuned. Both filters must be prepared at the same rate;
+        coefficients come from `left`. */
+    static void processStereo (LadderFilter& left, LadderFilter& right,
+                               float& l, float& r,
+                               float cutoffHz, float resonance, float drive) noexcept
+    {
+        const Coeffs c = left.makeCoeffs (cutoffHz, resonance, drive);
+        l = left.processWith (c, l);
+        r = right.processWith (c, r);
     }
 
 private:
@@ -132,7 +171,7 @@ private:
     float sr = 48000.0f;
     float maxCutoff = 20000.0f;
     float s1 = 0.0f, s2 = 0.0f, s3 = 0.0f, s4 = 0.0f;
-    float cachedDrive = -1.0f, driveIn = 1.0f, driveInv = 1.0f, makeup = 1.5f;
+    float cachedDrive = -1.0f, cachedDriveIn = 1.0f, cachedDriveInv = 1.0f, cachedMakeup = 1.5f;
     FilterMode mode = FilterMode::LP24;
 };
 

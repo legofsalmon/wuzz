@@ -49,6 +49,15 @@ public:
     Picker (APVTS& state, const juce::String& paramId, const juce::String& caption)
     {
         box.setJustificationType (juce::Justification::centredLeft);
+
+        // The attachment maps values to item indices but does NOT create the items -
+        // an unpopulated ComboBox renders as a working-looking, permanently empty
+        // menu. This shipped: every dropdown in the plugin was unselectable.
+        if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (state.getParameter (paramId)))
+            box.addItemList (choice->choices, 1);
+        else
+            jassertfalse;   // Picker is only meant for choice parameters
+
         addAndMakeVisible (box);
 
         label.setText (caption, juce::dontSendNotification);

@@ -23,11 +23,13 @@ public:
         sr = (float) oversampledRate;
         rng = Rng (seed);
         filter.prepare (oversampledRate);
+        filterR.prepare (oversampledRate);
         ampEnv.prepare (oversampledRate);
         modEnv.prepare (oversampledRate);
         lfo1.prepare (oversampledRate, seed * 2654435761u + 1u);
         lfo2.prepare (oversampledRate, seed * 40503u + 7u);
         dcBlock.prepare (oversampledRate);
+        dcBlockR.prepare (oversampledRate);
         driftLfo.setTimeConstant (0.35f, oversampledRate);
         glideSmoother = 0.0f;
         cachedGlideTime = -1.0f;   // glideCoef depends on the rate, so force a recompute
@@ -37,6 +39,7 @@ public:
     void reset() noexcept
     {
         filter.reset();
+        filterR.reset();
         ampEnv.reset();
         modEnv.reset();
         dcBlock.reset();
@@ -85,7 +88,9 @@ public:
             subOsc.reset (p.randomPhase ? rng.nextUnipolar() : 0.0f);
             syncPhase = 0.0f;
             filter.reset();
+            filterR.reset();
             dcBlock.reset();
+            dcBlockR.reset();
         }
 
         applyBlockParams (p);
@@ -286,8 +291,7 @@ public:
         const float cutoff = cutoffFor (p, e2, basePitch);
         const float res = clampf (p.resonance + bus[ModDest::Resonance], 0.0f, 1.0f);
 
-        l = filter.process (l, cutoff, res, p.filterDrive);
-        r = filterR.process (r, cutoff, res, p.filterDrive);
+        LadderFilter::processStereo (filter, filterR, l, r, cutoff, res, p.filterDrive);
 
         if (postD > 1.001f)
         {

@@ -135,9 +135,9 @@ private:
 class DcBlocker
 {
 public:
-    void prepare (double sampleRate) noexcept
+    void prepare (double sampleRate, float cornerHz = 12.0f) noexcept
     {
-        r = 1.0f - (kTwoPi * 12.0f / (float) sampleRate);
+        r = 1.0f - (kTwoPi * cornerHz / (float) sampleRate);
         reset();
     }
 
