@@ -45,6 +45,27 @@ public:
         setColour (juce::Slider::textBoxTextColourId,         Palette::text);
         setColour (juce::Slider::textBoxOutlineColourId,      juce::Colours::transparentBlack);
         setColour (juce::Slider::textBoxBackgroundColourId,   juce::Colours::transparentBlack);
+
+        // Linear (bar) sliders - used by compact cells such as the mod matrix rows.
+        setColour (juce::Slider::backgroundColourId,          Palette::track);
+        setColour (juce::Slider::trackColourId,               Palette::accent);
+        setColour (juce::Slider::thumbColourId,               Palette::text);
+
+        // Tooltips and slider drag popups share the TooltipWindow colours.
+        setColour (juce::TooltipWindow::backgroundColourId,   Palette::panel);
+        setColour (juce::TooltipWindow::textColourId,         Palette::text);
+        setColour (juce::TooltipWindow::outlineColourId,      Palette::panelEdge);
+
+        // The save-preset prompt.
+        setColour (juce::AlertWindow::backgroundColourId,     Palette::panel);
+        setColour (juce::AlertWindow::textColourId,           Palette::text);
+        setColour (juce::AlertWindow::outlineColourId,        Palette::panelEdge);
+        setColour (juce::TextEditor::backgroundColourId,      Palette::background);
+        setColour (juce::TextEditor::textColourId,            Palette::text);
+        setColour (juce::TextEditor::outlineColourId,         Palette::panelEdge);
+        setColour (juce::TextEditor::focusedOutlineColourId,  Palette::accent);
+        setColour (juce::TextEditor::highlightColourId,       Palette::accentDim);
+        setColour (juce::CaretComponent::caretColourId,       Palette::text);
     }
 
     void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
@@ -91,6 +112,46 @@ public:
         g.strokePath (pointer, juce::PathStrokeType (juce::jmax (1.6f, thickness * 0.45f),
                                                      juce::PathStrokeType::curved,
                                                      juce::PathStrokeType::rounded));
+    }
+
+    void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
+                           float sliderPos, float minSliderPos, float maxSliderPos,
+                           juce::Slider::SliderStyle style, juce::Slider& slider) override
+    {
+        if (style != juce::Slider::LinearHorizontal || slider.isTwoValue() || slider.isThreeValue())
+        {
+            LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos,
+                                              minSliderPos, maxSliderPos, style, slider);
+            return;
+        }
+
+        const auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat();
+        const float trackH = juce::jmin (4.0f, bounds.getHeight() * 0.3f);
+        const auto track = bounds.withSizeKeepingCentre (bounds.getWidth(), trackH);
+
+        g.setColour (Palette::track);
+        g.fillRoundedRectangle (track, trackH * 0.5f);
+
+        // Same rule as the rotaries: bipolar values fill outward from the centre,
+        // so "no modulation" reads as empty rather than half full.
+        const bool bipolar = slider.getMinimum() < -0.0001 && slider.getMaximum() > 0.0001;
+        const float originX = bipolar
+            ? (float) x + (float) width * (float) slider.valueToProportionOfLength (0.0)
+            : track.getX();
+
+        const float fillL = juce::jmin (originX, sliderPos);
+        const float fillR = juce::jmax (originX, sliderPos);
+
+        if (fillR - fillL > 0.5f)
+        {
+            g.setColour (slider.isEnabled() ? Palette::accent : Palette::track);
+            g.fillRoundedRectangle (fillL, track.getY(), fillR - fillL, trackH, trackH * 0.5f);
+        }
+
+        const float thumbD = juce::jmin (11.0f, bounds.getHeight() * 0.9f);
+        g.setColour (Palette::text);
+        g.fillEllipse (juce::Rectangle<float> (thumbD, thumbD)
+                           .withCentre ({ sliderPos, track.getCentreY() }));
     }
 
     void drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
