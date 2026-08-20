@@ -10,3 +10,4 @@ JUCE/
 .DS_Store
 .vscode/
 .idea/
+.claude/

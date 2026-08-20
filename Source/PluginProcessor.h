@@ -91,8 +91,10 @@ private:
         processBlock would be a heap allocation on the audio thread. */
     juce::AudioBuffer<float> monoScratch;
 
-    /** Reused when splitting an oversized block, so the split path allocates nothing. */
+    /** Reused when splitting an oversized block; pre-sized in prepareToPlay so the
+        split path stays off the heap. */
     juce::MidiBuffer chunkMidi;
+    int chunkBaseOffset = 0;
 
     // Effects are skipped entirely when bypassed, so their delay lines hold whatever
     // was in them and replay it on re-enable. Tracked so they can be cleared on the

@@ -67,12 +67,9 @@ public:
             return;
         }
 
-        const float d  = detuneCurve (clampf (detune, 0.0f, 1.0f));
-        const float mix = clampf (detune, 0.0f, 1.0f);
-        const float gC = centreGain (mix);
-        const float gS = sideGain (mix);
 
         updatePan (spread);
+        updateGains (detune);
 
         const int* idx = layoutFor (count);
 
@@ -90,13 +87,8 @@ public:
         {
             const float off = kSpread[idx[i]];
             const float inc = clampf (baseInc * (1.0f + off * d), 1.0e-6f, 0.45f);
-            // The inner pair replaces a centre voice AND its own two side slots, and
-            // detuned copies add in power, not amplitude - a plain gC/2 leaves even
-            // counts ~4.5 dB under their odd neighbours at working detunes. The
-            // power-correct blend is exact for decorrelated copies and still lands on
-            // gC/2 near zero detune where gS is negligible.
             const float g   = (off == 0.0f)              ? gC
-                            : (i == innerA || i == innerB) ? std::sqrt (0.5f * gC * gC + gS * gS)
+                            : (i == innerA || i == innerB) ? gInner
                                                            : gS;
 
             const float v = oscs[i].process (t, inc, wave, pw, syncSince, syncUntil) * g;
@@ -143,6 +135,28 @@ private:
                                              + 0.0030115596f;
     }
 
+    /** The detune response is an 11th-order polynomial and the gain model needs a
+        square root for the even-count inner pair; all of it depends only on the
+        detune knob, so it is rebuilt on change rather than recomputed per sample.
+
+        The inner pair replaces a centre voice AND its own two side slots, and
+        detuned copies add in power, not amplitude - a plain gC/2 left even counts
+        ~4.5 dB under their odd neighbours at working detunes. The power-correct
+        blend is exact for decorrelated copies and still lands on gC/2 near zero
+        detune where gS is negligible. */
+    void updateGains (float detune) noexcept
+    {
+        const float mix = clampf (detune, 0.0f, 1.0f);
+        if (mix == cachedDetune)
+            return;
+
+        cachedDetune = mix;
+        d  = detuneCurve (mix);
+        gC = centreGain (mix);
+        gS = sideGain (mix);
+        gInner = std::sqrt (0.5f * gC * gC + gS * gS);
+    }
+
     /** Constant-power pan positions follow the detune direction, so the stack widens
         outward. They depend only on the stack size and the width knob, so they are
         rebuilt on change rather than recomputed per sample. */
@@ -174,6 +188,8 @@ private:
     Osc oscs[kMaxVoices];
     float panL[kMaxVoices] = {}, panR[kMaxVoices] = {};
     float cachedSpread = -1.0f;
+    float cachedDetune = -1.0f;
+    float d = 0.0f, gC = 1.0f, gS = 0.044f, gInner = 0.5f;
     int cachedCount = -1;
     int count = 1;
 };

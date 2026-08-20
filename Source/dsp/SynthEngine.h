@@ -33,8 +33,11 @@ public:
         if (v == voiceCount)
             return;
 
+        // Voices above the new count fade out over a few milliseconds instead of
+        // being cut mid-waveform; the render loop covers all voices so the fade
+        // actually plays out even though allocation stops at voiceCount.
         for (int i = v; i < voiceCount; ++i)
-            voices[(size_t) i].reset();
+            voices[(size_t) i].steal();
 
         voiceCount = v;
     }
@@ -174,14 +177,17 @@ public:
 
         // Block-rate parameters have to reach the voices somehow; doing it here keeps
         // the per-sample path free of the comparisons.
-        for (int v = 0; v < voiceCount; ++v)
+        for (int v = 0; v < kMaxVoices; ++v)
             voices[(size_t) v].applyBlockParams (p);
 
         for (int i = 0; i < numSamples; ++i)
         {
             float l = 0.0f, r = 0.0f;
 
-            for (int v = 0; v < voiceCount; ++v)
+            // kMaxVoices, not voiceCount: a voice fading out after a count shrink
+            // lives above voiceCount and still needs to render to silence. Inactive
+            // voices return immediately, so the widened loop costs nothing.
+            for (int v = 0; v < kMaxVoices; ++v)
                 voices[(size_t) v].render (p, pitchBend, modWheel, l, r);
 
             L[i] += l;

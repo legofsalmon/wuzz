@@ -164,14 +164,21 @@ public:
         bus.values[(int) ModSource::Aftertouch] = pressure;
         bus.values[(int) ModSource::Random]     = randomPerNote;
 
-        bus.clearDest();
-        // LFO 1's rate can itself be modulated, so its slot is applied first.
-        bus.values[(int) ModSource::Lfo1] = 0.0f;
         bus.values[(int) ModSource::Lfo2] = lfo2.process (p.lfo2Rate);
-        bus.apply (p.mod, kNumModSlots);
 
-        const float lfo1Rate = clampf (p.lfo1Rate * std::exp2 (bus[ModDest::Lfo1Rate] * 4.0f),
-                                       0.0f, 200.0f);
+        // LFO 1's rate can itself be modulated, so its slots are resolved with a
+        // targeted scan before LFO 1 runs. This used to be a full clear+apply of the
+        // whole bus, run twice per sample - the first pass wasted whenever nothing
+        // routes to Lfo1Rate, which is nearly every patch.
+        float lfo1RateMod = 0.0f;
+        for (int m = 0; m < kNumModSlots; ++m)
+            if (p.mod[m].dest == ModDest::Lfo1Rate && p.mod[m].source != ModSource::None
+                && p.mod[m].source != ModSource::Lfo1)
+                lfo1RateMod += bus.values[(int) p.mod[m].source] * p.mod[m].amount;
+
+        const float lfo1Rate = lfo1RateMod == 0.0f
+                             ? p.lfo1Rate
+                             : clampf (p.lfo1Rate * fastExp2 (lfo1RateMod * 4.0f), 0.0f, 200.0f);
         bus.values[(int) ModSource::Lfo1] = lfo1.process (lfo1Rate);
 
         bus.clearDest();
@@ -255,7 +262,13 @@ public:
         const float subLvl = levelGain (p.subLevel, bus[ModDest::SubLevel]);
         if (subLvl > 0.0f)
         {
-            const float subInc = clampf (inc1 * std::exp2 ((float) p.subOctave), 1.0e-6f, 0.45f);
+            if (p.subOctave != cachedSubOctave)
+            {
+                cachedSubOctave = p.subOctave;
+                subOctaveScale = std::exp2 ((float) p.subOctave);
+            }
+
+            const float subInc = clampf (inc1 * subOctaveScale, 1.0e-6f, 0.45f);
             tsSub.update (subInc);
             const Wave  sw = p.subWave == SubWave::Sine     ? Wave::Sine
                            : p.subWave == SubWave::Triangle ? Wave::Triangle
@@ -340,7 +353,10 @@ private:
 
     static float driveAmount (float base, float mod) noexcept
     {
-        return clampf (base * std::exp2 (mod * 3.0f), 1.0f, 60.0f);
+        if (mod == 0.0f)
+            return clampf (base, 1.0f, 60.0f);
+
+        return clampf (base * fastExp2 (mod * 3.0f), 1.0f, 60.0f);
     }
 
     float incrementFor (float pitch, const EngineParams::OscParams& o) const noexcept
@@ -374,6 +390,8 @@ private:
     float driftTarget = 0.0f;
     float cachedGlideTime = -1.0f;
     float glideCoef = 1.0f;
+    int cachedSubOctave = -1000;
+    float subOctaveScale = 0.5f;
     TableSet ts1, ts2, tsSub;
 
     UnisonStack osc1, osc2;

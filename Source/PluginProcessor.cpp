@@ -54,6 +54,7 @@ void NitedriveProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     monoScratch.setSize (2, maxBlockSize, false, false, true);
     monoScratch.clear();
+    chunkMidi.ensureSize (8192);
 
     outputGain.reset (sampleRate, 0.02);
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (get (refs.outputGain, -6.0f)));
@@ -278,6 +279,7 @@ void NitedriveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         while (offset < numSamples)
         {
             const int chunk = juce::jmin (maxBlockSize, numSamples - offset);
+            const bool last = offset + chunk >= numSamples;
 
             juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(),
                                            buffer.getNumChannels(), offset, chunk);
@@ -285,19 +287,30 @@ void NitedriveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             chunkMidi.clear();
             for (const auto meta : midi)
             {
-                const int pos = meta.samplePosition - offset;
+                int pos = meta.samplePosition - offset;
+
+                // A host that oversends its block can also place an event at or past
+                // the block end; dropping it here left notes stuck forever. Clamp
+                // strays into the final chunk, mirroring what renderEngine does on
+                // the unchunked path.
+                if (last)
+                    pos = juce::jmin (pos, chunk - 1);
+
                 if (pos >= 0 && pos < chunk)
                     chunkMidi.addEvent (meta.getMessage(), pos);
             }
 
+            chunkBaseOffset = offset;
             processChunk (view, chunkMidi);
             offset += chunk;
         }
 
+        chunkBaseOffset = 0;
         midi.clear();
         return;
     }
 
+    chunkBaseOffset = 0;
     processChunk (buffer, midi);
 }
 
@@ -400,9 +413,13 @@ void NitedriveProcessor::processChunk (juce::AudioBuffer<float>& buffer, juce::M
 
     // When the transport is stopped the pump free-runs so the effect is still
     // audible while auditioning a patch.
-    double phase = hostPlaying ? std::fmod (hostPpq / pumpBeats, 1.0) : pumpPhase;
-    if (phase < 0.0)
-        phase += 1.0;
+    // The playhead reports one ppq for the whole host block, so a chunked oversized
+    // block must advance the derived phase by its own offset or every chunk replays
+    // the same duck segment.
+    double phase = hostPlaying
+                 ? std::fmod (hostPpq / pumpBeats, 1.0) + chunkBaseOffset * pumpInc
+                 : pumpPhase;
+    phase -= std::floor (phase);
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (get (refs.outputGain, -6.0f)));
 

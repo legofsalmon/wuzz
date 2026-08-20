@@ -133,7 +133,7 @@ public:
     void prepare (double sampleRate)
     {
         sr = (float) sampleRate;
-        for (auto& d : lines) d.prepare (sampleRate, 0.06f);
+        line.prepare (sampleRate, 0.06f);
         for (int i = 0; i < 3; ++i)
         {
             lfos[i].prepare (sampleRate, 0x1234567u + (uint32_t) i * 7919u);
@@ -144,7 +144,7 @@ public:
 
     void reset() noexcept
     {
-        for (auto& d : lines) d.reset();
+        line.reset();
         for (int i = 0; i < 3; ++i) lfos[i].reset ((float) i / 3.0f);
     }
 
@@ -153,11 +153,10 @@ public:
         @param mix     0..1 */
     void process (float& l, float& r, float rateHz, float depth, float mix) noexcept
     {
+        // One line, three modulated taps: the three voices read the same delayed
+        // signal at different offsets, so three separate buffers were pure waste.
         const float mono = 0.5f * (l + r);
-
-        lines[0].write (mono);
-        lines[1].write (mono);
-        lines[2].write (mono);
+        line.write (mono);
 
         const float d = clampf (depth, 0.0f, 1.0f);
         const float baseMs = 8.0f;
@@ -168,7 +167,7 @@ public:
         {
             const float m = lfos[i].process (rateHz);
             const float ms = baseMs + swingMs * m + (float) i * 2.5f;
-            const float v = lines[(size_t) i].read (ms * 0.001f * sr);
+            const float v = line.read (ms * 0.001f * sr);
 
             // Outer voices in anti-phase across the stereo field.
             if (i == 0) { wetL += v;        wetR += v * 0.35f; }
@@ -183,7 +182,7 @@ public:
 
 private:
     float sr = 48000.0f;
-    DelayLine lines[3];
+    DelayLine line;
     Lfo lfos[3];
 };
 

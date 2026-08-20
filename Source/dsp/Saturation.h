@@ -146,6 +146,7 @@ public:
         {
             cachedType = type;
             cachedDrive = d;
+            scaledDrive = d;
             outScale = std::pow (d, -0.3f);   // drive stays a timbre control, not a volume one
             reset();                           // a different curve genuinely invalidates the history
         }
@@ -163,7 +164,15 @@ public:
             }
 
             cachedDrive = d;
-            outScale = std::pow (d, -0.3f);
+
+            // The makeup trim is a slow gain, not tuning: recomputing the pow only
+            // when drive has moved 1% caps the step at ~0.04 dB while keeping libm
+            // out of the loop under per-sample modulation (~12M calls/s at Ultra).
+            if (std::abs (d - scaledDrive) > 0.01f * scaledDrive)
+            {
+                scaledDrive = d;
+                outScale = std::pow (d, -0.3f);
+            }
         }
 
         const float xs = x * d;
@@ -186,7 +195,7 @@ public:
 
 private:
     float xPrev = 0.0f, fPrev = 0.0f;
-    float cachedDrive = -1.0f, outScale = 1.0f;
+    float cachedDrive = -1.0f, scaledDrive = 1.0f, outScale = 1.0f;
     DriveType cachedType = DriveType::NumTypes;
     bool primed = false;
 };
