@@ -200,9 +200,17 @@ transport-locked ducker for the sidechain pump.
 
 ### Presets
 
-12 factory patches, exposed to the host as programs: Init, Nite Bass, Rave Stab,
+14 factory patches, exposed to the host as programs: Init, Nite Bass, Rave Stab,
 Acid Drive, Supersaw Lead, Fuzz Chords, Sync Scream, Ring Metal, Juno Pad,
-Pump Saws, Sub Thump, Noise Sweep.
+Pump Saws, Sub Thump, Noise Sweep, Electro Clap, Compute Bleep. The bank is
+level-matched (peaks within a 4 dB window, enforced by a test) and every patch's
+tonal register is verified against rendered-audio measurements - the
+`NITEDRIVE_DUMP_FEATURES=1` mode of the test binary prints them.
+
+Your own patches: the **SAVE** button in the header writes the current state to
+`~/Library/Application Support/NITEDRIVE/Presets/` (or the platform equivalent),
+and saved patches appear in the preset menu under a *User* section. A `*` on the
+preset name marks unsaved tweaks.
 
 ### CPU
 
@@ -215,14 +223,17 @@ all sustaining at once — 224 simultaneous oscillators.
 
 | Quality | % of one 2.8 GHz Xeon core |
 |---------|---------------------------|
-| Eco (1x)   | 30% |
-| High (2x)  | 54% |
-| Ultra (4x) | 104% |
+| Eco (1x)   | ~33% |
+| High (2x)  | ~62% |
+| Ultra (4x) | ~130% |
 
-Ultra exceeds real time at that load on this machine, so treat it as a bounce/render
-setting rather than a tracking one. Apple Silicon runs this workload considerably
-faster, and normal patches are nowhere near 224 oscillators — a 3-voice unison bass
-on 8 voices is roughly a tenth of the figures above.
+Absolute numbers on a shared/virtualised machine drift by up to ±35% with load and
+clock state — `ctest` prints the table for whatever machine it runs on, and those
+printed numbers are the honest ones for your hardware. Ultra exceeds real time at
+this worst-case load, so treat it as a bounce/render setting rather than a tracking
+one. Apple Silicon runs this workload considerably faster, and normal patches are
+nowhere near 224 oscillators — a 3-voice unison bass on 8 voices is roughly a tenth
+of the figures above.
 
 ---
 
