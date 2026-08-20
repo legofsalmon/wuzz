@@ -50,7 +50,8 @@ private:
     void loadUserPreset (int userIndex);
 
     /** Called after any preset load; remembers the clean state for the '*' marker. */
-    void presetLoaded (const juce::String& name);
+    void presetLoaded (const juce::String& name, int comboId);
+    void showSaveError (const juce::String& path);
     void updateDirtyIndicator();
 
     // ---- sync toggles greying out the controls they supersede ----
@@ -93,6 +94,8 @@ private:
 
     juce::Array<juce::File> userPresetFiles;
     juce::String currentPresetName;
+    int currentPresetId = 0;
+    juce::Component::SafePointer<juce::AlertWindow> saveDialog;
     bool stateDirtyPending = false;
     bool shownDirty = false;
     std::vector<std::pair<juce::RangedAudioParameter*, float>> referenceValues;

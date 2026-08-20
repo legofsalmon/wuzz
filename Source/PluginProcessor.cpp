@@ -289,15 +289,18 @@ void NitedriveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             {
                 int pos = meta.samplePosition - offset;
 
-                // A host that oversends its block can also place an event at or past
-                // the block end; dropping it here left notes stuck forever. Clamp
-                // strays into the final chunk, mirroring what renderEngine does on
-                // the unchunked path.
+                // A host that oversends its block can also misplace events off either
+                // end; dropping one left notes stuck forever. Clamp strays into the
+                // first/last chunk, mirroring renderEngine's two-sided jlimit on the
+                // unchunked path. Raw bytes, not getMessage(): a MidiMessage copy
+                // heap-allocates for sysex, and this is the audio thread.
+                if (offset == 0)
+                    pos = juce::jmax (pos, 0);
                 if (last)
                     pos = juce::jmin (pos, chunk - 1);
 
                 if (pos >= 0 && pos < chunk)
-                    chunkMidi.addEvent (meta.getMessage(), pos);
+                    chunkMidi.addEvent (meta.data, meta.numBytes, pos);
             }
 
             chunkBaseOffset = offset;

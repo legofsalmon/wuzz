@@ -40,7 +40,8 @@ inline float fastTanh (float x) noexcept
 }
 
 
-/** Fast 2^x, accurate to ~1e-6 over the range the synth uses.
+/** Fast 2^x, accurate to ~1e-4 relative (worst case near the top of a fractional
+    interval - about 0.001 dB when used on a gain).
 
     Pitch, cutoff and drive are all exponential in this engine, so exp2 sits in the
     innermost loop several times per voice per sample. The integer part goes straight

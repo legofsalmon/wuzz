@@ -427,6 +427,16 @@ void testStereoSymmetry()
         for (int i = 0; i < n; ++i)
             worst = juce::jmax (worst, std::abs (L[(size_t) i] - R[(size_t) i]));
 
+        double rms = 0.0;
+        for (int i = 0; i < n; ++i)
+            rms += (double) L[(size_t) i] * L[(size_t) i];
+        rms = std::sqrt (rms / n);
+
+        // Identical channels is also true of a broken, silent render - require the
+        // patch to actually sound before the symmetry claim means anything.
+        checkTrue (rms > 0.05, "symmetry patch actually renders sound at "
+                        + juce::String (sr / 1000.0, 1) + " kHz",
+                   "rms " + juce::String (rms, 4));
         checkBelow (worst, 1.0e-6, "mono patch renders identical channels at "
                         + juce::String (sr / 1000.0, 1) + " kHz", "");
     }
@@ -1119,6 +1129,31 @@ const NotePlan kPlans[] = {
 void dump (std::ostream& json)
 {
     TestHost host;
+
+    // kPlans is a hand-maintained parallel of the preset bank; a mismatch would
+    // read past the array or silently attribute measurements to the wrong patch.
+    const int numPlans = (int) (sizeof (kPlans) / sizeof (kPlans[0]));
+    if (numPlans != ndp::getNumPresets())
+    {
+        json << "[]" << std::endl;
+        std::cerr << "features::kPlans has " << numPlans << " entries but the bank has "
+                  << ndp::getNumPresets() << " presets - update kPlans" << std::endl;
+        jassertfalse;
+        return;
+    }
+
+    for (int i = 0; i < ndp::getNumPresets(); ++i)
+    {
+        if (ndp::getPresetName (i) != kPlans[i].name)
+        {
+            json << "[]" << std::endl;
+            std::cerr << "features::kPlans[" << i << "] is '" << kPlans[i].name
+                      << "' but the bank has '" << ndp::getPresetName (i).toStdString()
+                      << "' - order mismatch" << std::endl;
+            jassertfalse;
+            return;
+        }
+    }
     // The shipping default is High quality: voices at 2x the host rate. Measuring at
     // the voice rate (FX are rate-aware) keeps the nonlinear clamps and filter
     // behaviour the same as what users hear.
@@ -1371,7 +1406,10 @@ void dump (std::ostream& json)
 
         auto db = [] (double v) { return 20.0 * std::log10 (juce::jmax (1e-12, v)); };
 
-        json << "  {\"preset\": \"" << plan.name << "\""
+        // Preset names are compile-time literals today, but an unescaped quote or
+        // backslash would corrupt the JSON the gain-staging test parses.
+        json << "  {\"preset\": \"" << juce::String (plan.name).replace ("\\", "\\\\")
+                                                                 .replace ("\"", "\\\"") << "\""
                   << ", \"peak_db\": "   << juce::String (db (peak), 1)
                   << ", \"rms_db\": "    << juce::String (db (rms), 1)
                   << ", \"crest_db\": "  << juce::String (db (peak) - db (rms), 1)
@@ -1440,7 +1478,7 @@ void testBankGainStaging()
                "every preset peaks inside the -12..-2 dBFS window",
                "range " + juce::String (lo, 1) + " (" + loName + ") .. "
                    + juce::String (hi, 1) + " (" + hiName + ")");
-    checkBelow (hi - lo, 8.0, "bank peak spread", "dB");
+    checkBelow (hi - lo, 4.5, "bank peak spread", "dB");
     checkTrue (infraOk, "no preset spends >15% of its energy below 20 Hz", infraName);
 }
 

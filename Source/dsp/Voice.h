@@ -176,8 +176,10 @@ public:
                 && p.mod[m].source != ModSource::Lfo1)
                 lfo1RateMod += bus.values[(int) p.mod[m].source] * p.mod[m].amount;
 
+        // Both branches keep the 200 Hz cap: a synced rate is host-BPM-derived and
+        // an unhinged playhead must not spin the LFO into the audio band.
         const float lfo1Rate = lfo1RateMod == 0.0f
-                             ? p.lfo1Rate
+                             ? clampf (p.lfo1Rate, 0.0f, 200.0f)
                              : clampf (p.lfo1Rate * fastExp2 (lfo1RateMod * 4.0f), 0.0f, 200.0f);
         bus.values[(int) ModSource::Lfo1] = lfo1.process (lfo1Rate);
 

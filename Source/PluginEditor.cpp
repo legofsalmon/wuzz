@@ -67,7 +67,7 @@ NitedriveEditor::NitedriveEditor (NitedriveProcessor& p)
             // preset marked dirty ('*') is how you revert your edits.
             proc.setCurrentProgram (id - 1);
             lastSeenProgram = id - 1;
-            presetLoaded (ndp::getPresetName (id - 1));
+            presetLoaded (ndp::getPresetName (id - 1), id);
         }
     };
 
@@ -127,6 +127,15 @@ NitedriveEditor::~NitedriveEditor()
 
     cancelPendingUpdate();
     proc.apvts.state.removeListener (this);
+
+    // A save dialog left open when the host tears the editor down would outlive the
+    // LookAndFeel it points at and fire its callback into a dead editor.
+    if (saveDialog != nullptr)
+    {
+        saveDialog->setLookAndFeel (nullptr);
+        saveDialog->exitModalState (0);
+        delete saveDialog.getComponent();
+    }
 
     stopTimer();
     setLookAndFeel (nullptr);
@@ -336,6 +345,11 @@ void NitedriveEditor::promptSaveUserPreset()
                                           "Save the current settings as a user preset.",
                                           juce::MessageBoxIconType::NoIcon,
                                           this);
+    // An AlertWindow is a parentless top-level component: it does NOT inherit the
+    // editor's LookAndFeel, so without this it renders in stock JUCE grey and the
+    // dialog colours defined in LookAndFeel.h are dead code.
+    window->setLookAndFeel (&lnf);
+    saveDialog = window;
     window->addTextEditor ("name", currentPresetName, "Name:");
     window->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
     window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -359,6 +373,18 @@ void NitedriveEditor::promptSaveUserPreset()
     }
 }
 
+void NitedriveEditor::showSaveError (const juce::String& path)
+{
+    // A silently discarded save reads as a saved preset that later vanished.
+    auto opts = juce::MessageBoxOptions()
+                    .withIconType (juce::MessageBoxIconType::WarningIcon)
+                    .withTitle ("Preset not saved")
+                    .withMessage ("Could not write:\n" + path)
+                    .withButton ("OK")
+                    .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (opts, nullptr);
+}
+
 void NitedriveEditor::saveUserPreset (const juce::String& rawName)
 {
     const auto legal = juce::File::createLegalFileName (rawName.trim());
@@ -369,7 +395,10 @@ void NitedriveEditor::saveUserPreset (const juce::String& rawName)
     auto dir = userPresetDirectory();
 
     if (! dir.createDirectory())
+    {
+        showSaveError (dir.getFullPathName());
         return;
+    }
 
     // Same name = overwrite: saving over your own preset is the common case.
     auto file = dir.getChildFile (legal + ".xml");
@@ -377,11 +406,14 @@ void NitedriveEditor::saveUserPreset (const juce::String& rawName)
     if (auto xml = proc.apvts.copyState().createXml())
     {
         if (! xml->writeTo (file))
+        {
+            showSaveError (file.getFullPathName());
             return;
+        }
     }
     else
     {
-        return;
+        showSaveError (file.getFullPathName());
     }
 
     rescanUserPresets();
@@ -389,11 +421,9 @@ void NitedriveEditor::saveUserPreset (const juce::String& rawName)
 
     const int index = userPresetFiles.indexOf (file);
 
-    if (index >= 0)
-        presetBox.setSelectedId (kUserPresetIdBase + index, juce::dontSendNotification);
-
     lastSeenProgram = proc.getCurrentProgram();
-    presetLoaded (file.getFileNameWithoutExtension());
+    presetLoaded (file.getFileNameWithoutExtension(),
+                  index >= 0 ? kUserPresetIdBase + index : 0);
 }
 
 void NitedriveEditor::loadUserPreset (int userIndex)
@@ -424,12 +454,13 @@ void NitedriveEditor::loadUserPreset (int userIndex)
     // The host program has not changed; stop the timer from stamping the factory
     // name back over the user selection.
     lastSeenProgram = proc.getCurrentProgram();
-    presetLoaded (file.getFileNameWithoutExtension());
+    presetLoaded (file.getFileNameWithoutExtension(), kUserPresetIdBase + userIndex);
 }
 
-void NitedriveEditor::presetLoaded (const juce::String& name)
+void NitedriveEditor::presetLoaded (const juce::String& name, int comboId)
 {
     currentPresetName = name;
+    currentPresetId = comboId;
 
     // Snapshot the freshly loaded values; the '*' marker compares against these.
     // Read from the parameters, not the tree: parameter writes land synchronously,
@@ -445,7 +476,13 @@ void NitedriveEditor::presetLoaded (const juce::String& name)
     if (shownDirty)
         shownDirty = false;
 
-    presetBox.setText (currentPresetName, juce::dontSendNotification);
+    // Selection travels by item id, never by text: ComboBox::setText re-selects the
+    // first item whose text matches, so a user preset named like a factory preset
+    // would hijack the selection and leave the factory patch unloadable.
+    if (currentPresetId > 0)
+        presetBox.setSelectedId (currentPresetId, juce::dontSendNotification);
+    else
+        presetBox.setText (currentPresetName, juce::dontSendNotification);
 
     updateSyncDependentControls();
 }
@@ -466,17 +503,22 @@ void NitedriveEditor::updateDirtyIndicator()
     if (dirty != shownDirty)
     {
         shownDirty = dirty;
-        presetBox.setText (dirty ? "* " + currentPresetName : currentPresetName,
-                           juce::dontSendNotification);
+
+        // The starred text matches no item so it cannot mis-select; the clean state
+        // goes back to the id for the same reason as in presetLoaded().
+        if (dirty || currentPresetId <= 0)
+            presetBox.setText (dirty ? "* " + currentPresetName : currentPresetName,
+                               juce::dontSendNotification);
+        else
+            presetBox.setSelectedId (currentPresetId, juce::dontSendNotification);
     }
 }
 
 void NitedriveEditor::refreshPresetBox()
 {
     const int program = proc.getCurrentProgram();
-    presetBox.setSelectedId (program + 1, juce::dontSendNotification);
     lastSeenProgram = program;
-    presetLoaded (ndp::getPresetName (program));
+    presetLoaded (ndp::getPresetName (program), program + 1);
 }
 
 // ---------------------------------------------------------------------------

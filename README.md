@@ -203,8 +203,8 @@ transport-locked ducker for the sidechain pump.
 14 factory patches, exposed to the host as programs: Init, Nite Bass, Rave Stab,
 Acid Drive, Supersaw Lead, Fuzz Chords, Sync Scream, Ring Metal, Juno Pad,
 Pump Saws, Sub Thump, Noise Sweep, Electro Clap, Compute Bleep. The bank is
-level-matched (peaks within a 4 dB window, enforced by a test) and every patch's
-tonal register is verified against rendered-audio measurements - the
+level-matched (peak spread held under 4.5 dB by a test; currently 3.7 dB) and
+every patch's tonal register is verified against rendered-audio measurements - the
 `NITEDRIVE_DUMP_FEATURES=1` mode of the test binary prints them.
 
 Your own patches: the **SAVE** button in the header writes the current state to
@@ -228,8 +228,10 @@ all sustaining at once — 224 simultaneous oscillators.
 | Ultra (4x) | ~130% |
 
 Absolute numbers on a shared/virtualised machine drift by up to ±35% with load and
-clock state — `ctest` prints the table for whatever machine it runs on, and those
-printed numbers are the honest ones for your hardware. Ultra exceeds real time at
+clock state. The honest figures for your hardware come from running the test binary
+directly (`build/nitedrive_tests_artefacts/Release/nitedrive_tests`, which prints
+this table at the end) or `ctest --test-dir build -V` — a plain `ctest` run
+swallows test output on success. Ultra exceeds real time at
 this worst-case load, so treat it as a bounce/render setting rather than a tracking
 one. Apple Silicon runs this workload considerably faster, and normal patches are
 nowhere near 224 oscillators — a 3-voice unison bass on 8 voices is roughly a tenth

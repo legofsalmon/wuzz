@@ -198,7 +198,9 @@ public:
     int getActiveVoiceCount() const noexcept
     {
         int n = 0;
-        for (int i = 0; i < voiceCount; ++i)
+        // kMaxVoices to match the render loop: a voice fading after a count shrink
+        // is still sounding and should still show in the readout.
+        for (int i = 0; i < kMaxVoices; ++i)
             if (voices[(size_t) i].isActive())
                 ++n;
         return n;
