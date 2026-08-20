@@ -200,9 +200,12 @@ transport-locked ducker for the sidechain pump.
 
 ### Presets
 
-14 factory patches, exposed to the host as programs: Init, Nite Bass, Rave Stab,
+15 factory patches, exposed to the host as programs: Init, Nite Bass, Rave Stab,
 Acid Drive, Supersaw Lead, Fuzz Chords, Sync Scream, Ring Metal, Juno Pad,
-Pump Saws, Sub Thump, Noise Sweep, Electro Clap, Compute Bleep. The bank is
+Pump Saws, Sub Thump, Noise Sweep, Electro Clap, Compute Bleep, Miserable Riff —
+the last built to the documented reverse-engineering of the "Miserable Girl"
+(Nite Versions) lead: hard sync into a keytracked square-LFO filter chop, envelope
+"burps", legato glide, and heavy drive doing most of the tone. The bank is
 level-matched (peak spread held under 4.5 dB by a test; currently 3.7 dB) and
 every patch's tonal register is verified against rendered-audio measurements - the
 `NITEDRIVE_DUMP_FEATURES=1` mode of the test binary prints them.

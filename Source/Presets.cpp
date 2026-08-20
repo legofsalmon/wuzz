@@ -24,7 +24,8 @@ namespace
            SRC_VEL = 5, SRC_KEY = 6, SRC_WHEEL = 7, SRC_AT = 8, SRC_RND = 9 };
     enum { DST_NONE = 0, DST_CUTOFF = 1, DST_RES = 2, DST_PITCH = 3, DST_OSC2PITCH = 4,
            DST_PW = 5, DST_DETUNE = 6, DST_O1LVL = 7, DST_O2LVL = 8, DST_SUBLVL = 9,
-           DST_NOISE = 10, DST_PREDRV = 11, DST_POSTDRV = 12, DST_AMP = 13, DST_PAN = 14 };
+           DST_NOISE = 10, DST_PREDRV = 11, DST_POSTDRV = 12, DST_AMP = 13, DST_PAN = 14,
+           DST_LFO1RATE = 15 };
     enum { LFO_SINE = 0, LFO_TRI = 1, LFO_SAWUP = 2, LFO_SAWDN = 3, LFO_SQR = 4, LFO_SH = 5, LFO_RND = 6 };
 
     // ---------------------------------------------------------------------------
@@ -231,6 +232,32 @@ namespace
         { "outputGain", -4.0f }
     };
 
+    // The "Miserable Girl" riff (Nite Versions, the lead at ~1:51), built from the
+    // documented reverse-engineering (Gearspace thread 124754) rather than guesswork:
+    // a hard-synced, wide-tuned source; a resonant lowpass chopped by a keytracked
+    // square LFO at the fastest rate the engine allows; a filter envelope that
+    // closes before note-off ("short burps"); mono legato with a little glide; and
+    // heavy distortion doing "more than 50% of the tone". Deliberately dry - no
+    // phaser, delay or pump; none of the sources hear any on this element.
+    const PV pMiserableRiff[] = {
+        { "osc1Wave", SAW }, { "osc1Level", 0.3f },
+        { "osc2Wave", SAW }, { "osc2Level", 0.95f }, { "osc2Sync", 1 },
+        { "osc2Coarse", 19.0f },
+        { "filterMode", LP24 }, { "cutoff", 1100.0f }, { "resonance", 0.65f },
+        { "filterDrive", 10.0f }, { "filterEnv", 0.55f }, { "keyTrack", 0.5f },
+        { "ampA", 0.002f }, { "ampD", 0.3f }, { "ampS", 0.8f }, { "ampR", 0.08f },
+        { "modA", 0.001f }, { "modD", 0.12f }, { "modS", 0.35f }, { "modR", 0.1f },
+        { "lfo1Shape", LFO_SQR }, { "lfo1Rate", 40.0f }, { "lfo1Retrig", 0 },
+        { "modSrc1", SRC_LFO1 }, { "modDst1", DST_CUTOFF }, { "modAmt1", 0.35f },
+        { "modSrc2", SRC_KEY }, { "modDst2", DST_LFO1RATE }, { "modAmt2", 0.6f },
+        { "modSrc3", SRC_MOD }, { "modDst3", DST_OSC2PITCH }, { "modAmt3", 0.4f },
+        { "preDriveType", D_TUBE }, { "preDrive", 8.0f },
+        { "postDriveType", D_FUZZ }, { "postDrive", 12.0f },
+        { "voiceMode", LEGATO }, { "glide", 0.025f }, { "glideLegato", 1 },
+        { "drift", 0.2f },
+        { "outputGain", -4.0f }
+    };
+
     const PV pInit[] = {
         { "osc1Wave", SAW }, { "osc1Level", 1.0f }, { "cutoff", 12000.0f },
         { "outputGain", -8.0f }
@@ -252,7 +279,8 @@ namespace
         ND_PRESET ("Sub Thump",       pSubThump),
         ND_PRESET ("Noise Sweep",     pNoiseSweep),
         ND_PRESET ("Electro Clap",    pElectroClap),
-        ND_PRESET ("Compute Bleep",   pComputeBleep)
+        ND_PRESET ("Compute Bleep",   pComputeBleep),
+        ND_PRESET ("Miserable Riff",  pMiserableRiff)
     };
 
     #undef ND_PRESET

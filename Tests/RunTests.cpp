@@ -1123,7 +1123,8 @@ const NotePlan kPlans[] = {
     { "Sub Thump",     { 33 },             0.25, 2.0 },
     { "Noise Sweep",   { 48 },             2.0, 4.0 },
     { "Electro Clap",  { 60 },             0.1, 2.0 },
-    { "Compute Bleep", { 69 },             0.15, 2.5 }
+    { "Compute Bleep", { 69 },             0.15, 2.5 },
+    { "Miserable Riff",{ 45 },             1.2, 3.0 }
 };
 
 void dump (std::ostream& json)
