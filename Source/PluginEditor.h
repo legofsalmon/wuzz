@@ -98,6 +98,7 @@ private:
     int currentPresetId = 0;
     juce::Component::SafePointer<juce::AlertWindow> saveDialog;
     bool stateDirtyPending = false;
+    std::atomic<bool> tearingDown { false };
     bool shownDirty = false;
     std::vector<std::pair<juce::RangedAudioParameter*, float>> referenceValues;
 

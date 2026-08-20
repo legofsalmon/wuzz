@@ -131,6 +131,8 @@ NitedriveEditor::NitedriveEditor (NitedriveProcessor& p)
 
 NitedriveEditor::~NitedriveEditor()
 {
+    tearingDown.store (true, std::memory_order_release);
+
     for (auto* id : { "delaySync", "lfo1Sync", "lfo2Sync" })
         proc.apvts.removeParameterListener (id, this);
 
@@ -138,11 +140,13 @@ NitedriveEditor::~NitedriveEditor()
     proc.apvts.state.removeListener (this);
 
     // A save dialog left open when the host tears the editor down would outlive the
-    // LookAndFeel it points at and fire its callback into a dead editor.
+    // LookAndFeel it points at. Deleting it directly is the single-ownership path:
+    // JUCE's modal manager tracks the window through a weak reference, so it copes
+    // with the deletion - whereas exitModalState() followed by delete raced the
+    // manager's own deferred delete-when-dismissed cleanup.
     if (saveDialog != nullptr)
     {
         saveDialog->setLookAndFeel (nullptr);
-        saveDialog->exitModalState (0);
         delete saveDialog.getComponent();
     }
 
@@ -536,9 +540,11 @@ void NitedriveEditor::refreshPresetBox()
 void NitedriveEditor::parameterChanged (const juce::String&, float)
 {
     // Parameter listeners may fire from any thread; hop to the message thread
-    // before touching components. AsyncUpdater is safe to trigger from anywhere
-    // and is cancelled in the destructor, so no callback can outlive the editor.
-    triggerAsyncUpdate();
+    // before touching components. The tearingDown guard closes the window where a
+    // callback already in flight during the destructor could re-arm the updater
+    // after cancelPendingUpdate() has run.
+    if (! tearingDown.load (std::memory_order_acquire))
+        triggerAsyncUpdate();
 }
 
 void NitedriveEditor::handleAsyncUpdate()
