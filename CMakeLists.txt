@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(NITEDRIVE VERSION 1.0.0 LANGUAGES C CXX)
+project(NITEDRIVE VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,6 +46,21 @@ target_compile_options(nd_warning_tweaks INTERFACE
     $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:
         -Wno-float-equal -Wno-switch-enum>)
 
+# Build-time version header: version from this file, git SHA from the checkout,
+# regenerated every build so the stamp always matches the compiled commit.
+set(ND_VERSION_HEADER_DIR "${CMAKE_BINARY_DIR}/generated")
+set(ND_VERSION_HEADER "${ND_VERSION_HEADER_DIR}/Version.h")
+
+add_custom_target(nd_version
+    COMMAND ${CMAKE_COMMAND}
+        -DND_VERSION=${PROJECT_VERSION}
+        -DND_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/Source/Version.h.in
+        -DND_OUTPUT=${ND_VERSION_HEADER}
+        -DND_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.cmake
+    BYPRODUCTS ${ND_VERSION_HEADER}
+    COMMENT "Stamping version header")
+
 set(ND_FORMATS VST3 Standalone)
 if(APPLE)
     list(APPEND ND_FORMATS AU)
@@ -82,7 +97,8 @@ target_compile_definitions(NITEDRIVE PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1)
 
-target_include_directories(NITEDRIVE PRIVATE Source)
+target_include_directories(NITEDRIVE PRIVATE Source ${ND_VERSION_HEADER_DIR})
+add_dependencies(NITEDRIVE nd_version)
 
 
 

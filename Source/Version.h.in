@@ -1,0 +1,10 @@
+#pragma once
+
+// Generated at build time by cmake/GenerateVersion.cmake - do not edit, and do not
+// commit a generated copy; the build writes it into the binary dir.
+
+#define ND_VERSION_STRING  "@ND_VERSION@"
+#define ND_GIT_SHA         "@ND_GIT_SHA@"
+// ASCII only: juce::String(const char*) reads literals as Latin-1, so a UTF-8
+// middle dot renders as mojibake in the editor.
+#define ND_BUILD_STRING    "v" ND_VERSION_STRING " (" ND_GIT_SHA ")"

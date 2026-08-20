@@ -79,6 +79,7 @@ private:
     juce::ComboBox presetBox;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, saveButton { "SAVE" };
     juce::Label voiceLabel;
+    juce::Label versionLabel;
     std::unique_ptr<LevelMeter> meter;
 
     std::vector<std::unique_ptr<ndg::Section>> sections;

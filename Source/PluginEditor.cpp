@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "Presets.h"
+#include "Version.h"
 
 using namespace ndg;
 
@@ -91,6 +92,14 @@ NitedriveEditor::NitedriveEditor (NitedriveProcessor& p)
     content.addAndMakeVisible (prevButton);
     content.addAndMakeVisible (nextButton);
     content.addAndMakeVisible (saveButton);
+
+    versionLabel.setText (ND_BUILD_STRING, juce::dontSendNotification);
+    versionLabel.setColour (juce::Label::textColourId, Palette::textDim);
+    versionLabel.setFont (juce::FontOptions (10.0f));
+    versionLabel.setJustificationType (juce::Justification::centredRight);
+    versionLabel.setTooltip ("NITEDRIVE " ND_VERSION_STRING ", built from commit " ND_GIT_SHA
+                             " (an asterisk means uncommitted changes were present)");
+    content.addAndMakeVisible (versionLabel);
 
     voiceLabel.setColour (juce::Label::textColourId, Palette::textDim);
     voiceLabel.setFont (juce::FontOptions (11.0f));
@@ -615,6 +624,7 @@ void NitedriveEditor::resized()
     saveButton.setBounds (header.removeFromLeft (56).reduced (2, 8));
     meter->setBounds (header.removeFromRight (180).reduced (4, 14));
     voiceLabel.setBounds (header.removeFromRight (90).reduced (2, 8));
+    versionLabel.setBounds (header.removeFromRight (130).reduced (2, 8));
 
     r.removeFromTop (8);
 

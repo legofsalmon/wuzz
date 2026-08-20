@@ -231,7 +231,8 @@ jobs:
           set -euo pipefail
           VERSION="$(sed -n 's/.*project(NITEDRIVE VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt | head -1)"
           VERSION="${VERSION:-1.0.0}"
-          ./packaging/macos/build-pkg.sh dist installer "$VERSION"
+          SHA="$(git rev-parse --short=9 HEAD)"
+          ./packaging/macos/build-pkg.sh dist installer "$VERSION" "$SHA"
           ls -la installer
 
       - name: Notarise and staple the installer

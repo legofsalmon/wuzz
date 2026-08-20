@@ -14,9 +14,14 @@
 # complain on first open.
 set -euo pipefail
 
-DIST="${1:?usage: build-pkg.sh <dist-dir> <output-dir> [version]}"
-OUT="${2:?usage: build-pkg.sh <dist-dir> <output-dir> [version]}"
+DIST="${1:?usage: build-pkg.sh <dist-dir> <output-dir> [version] [buildtag]}"
+OUT="${2:?usage: build-pkg.sh <dist-dir> <output-dir> [version] [buildtag]}"
 VERSION="${3:-1.0.0}"
+
+# Optional build tag (usually the git short SHA). pkg version fields must stay
+# numeric x.y.z, so the tag rides in the FILENAME and the welcome page, where it
+# answers "which build is this" without breaking pkgutil.
+BUILDTAG="${4:-}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
@@ -85,12 +90,24 @@ sed -i '' "s/version=\"1\.0\.0\"/version=\"$VERSION\"/g" "$DIST_XML" 2>/dev/null
 
 UNSIGNED="$WORK/NITEDRIVE-unsigned.pkg"
 
+# Stamp the version into the installer's own pages so what the user sees names
+# the build they are getting.
+RES="$WORK/resources"
+cp -R "$HERE/resources" "$RES"
+DISPLAY_VERSION="$VERSION${BUILDTAG:+ (build $BUILDTAG)}"
+sed -i '' "s/__ND_VERSION__/$DISPLAY_VERSION/g" "$RES"/*.html 2>/dev/null \
+    || sed -i "s/__ND_VERSION__/$DISPLAY_VERSION/g" "$RES"/*.html
+
 productbuild --distribution "$DIST_XML" \
              --package-path "$WORK" \
-             --resources "$HERE/resources" \
+             --resources "$RES" \
              "$UNSIGNED"
 
-FINAL="$OUT/NITEDRIVE-$VERSION.pkg"
+if [ -n "$BUILDTAG" ]; then
+    FINAL="$OUT/NITEDRIVE-$VERSION+$BUILDTAG.pkg"
+else
+    FINAL="$OUT/NITEDRIVE-$VERSION.pkg"
+fi
 
 if [ -n "${MACOS_INSTALLER_IDENTITY:-}" ]; then
     productsign --sign "$MACOS_INSTALLER_IDENTITY" "$UNSIGNED" "$FINAL"
