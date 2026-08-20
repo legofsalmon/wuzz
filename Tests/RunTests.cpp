@@ -1037,11 +1037,291 @@ void testPresetAudio()
     }
 }
 
+/** Renders every factory preset through the full signal path - engine plus the
+    effects the preset enables - and prints measured acoustic features as JSON.
+
+    Not a pass/fail test: this is the evidence base for judging whether each patch
+    matches the sound it is named after. Run with NITEDRIVE_DUMP_FEATURES=1. */
+namespace features
+{
+
+struct NotePlan
+{
+    const char* name;
+    std::vector<int> notes;
+    double gateSeconds;
+    double totalSeconds;
+};
+
+const NotePlan kPlans[] = {
+    { "Init",          { 60 },             1.2, 3.0 },
+    { "Nite Bass",     { 33 },             1.2, 3.0 },
+    { "Rave Stab",     { 45, 52, 57 },     0.2, 3.0 },
+    { "Acid Drive",    { 45 },             1.2, 3.0 },
+    { "Supersaw Lead", { 69 },             1.5, 3.5 },
+    { "Fuzz Chords",   { 50, 57, 62 },     1.0, 3.0 },
+    { "Sync Scream",   { 57 },             1.2, 3.0 },
+    { "Ring Metal",    { 60 },             1.0, 3.0 },
+    { "Juno Pad",      { 48, 55, 60, 64 }, 2.0, 4.5 },
+    { "Pump Saws",     { 45, 52, 57 },     1.5, 3.5 },
+    { "Sub Thump",     { 33 },             0.25, 2.0 },
+    { "Noise Sweep",   { 48 },             2.0, 4.0 }
+};
+
+void dump()
+{
+    TestHost host;
+    const double sr = 48000.0;
+
+    std::cout << "[" << std::endl;
+
+    for (int i = 0; i < ndp::getNumPresets(); ++i)
+    {
+        ndp::applyPreset (host.apvts, i);
+
+        auto value = [&host] (const char* id) -> float
+        {
+            auto* p = host.apvts.getRawParameterValue (id);
+            return p != nullptr ? p->load() : 0.0f;
+        };
+
+        nd::EngineParams p;
+        p.osc1.wave    = (nd::Wave) (int) value ("osc1Wave");
+        p.osc1.level   = value ("osc1Level");
+        p.osc1.octave  = (int) std::lround (value ("osc1Octave"));
+        p.osc1.coarse  = value ("osc1Coarse");
+        p.osc1.fine    = value ("osc1Fine");
+        p.osc1.pulseWidth = value ("osc1PW");
+        p.osc1.detune  = value ("osc1Detune");
+        p.osc1.spread  = value ("osc1Spread");
+        p.osc1.unison  = (int) std::lround (value ("osc1Unison"));
+        p.osc2.wave    = (nd::Wave) (int) value ("osc2Wave");
+        p.osc2.level   = value ("osc2Level");
+        p.osc2.octave  = (int) std::lround (value ("osc2Octave"));
+        p.osc2.coarse  = value ("osc2Coarse");
+        p.osc2.fine    = value ("osc2Fine");
+        p.osc2.pulseWidth = value ("osc2PW");
+        p.osc2.detune  = value ("osc2Detune");
+        p.osc2.spread  = value ("osc2Spread");
+        p.osc2.unison  = (int) std::lround (value ("osc2Unison"));
+        p.osc2Sync     = value ("osc2Sync") > 0.5f;
+        p.subWave      = (nd::SubWave) (int) value ("subWave");
+        p.subOctave    = (int) std::lround (value ("subOctave"));
+        p.subLevel     = value ("subLevel");
+        p.noiseLevel   = value ("noiseLevel");
+        p.ringLevel    = value ("ringLevel");
+        p.filterMode   = (nd::FilterMode) (int) value ("filterMode");
+        p.cutoff       = value ("cutoff");
+        p.resonance    = value ("resonance");
+        p.filterDrive  = value ("filterDrive");
+        p.keyTrack     = value ("keyTrack");
+        p.filterEnv    = value ("filterEnv");
+        p.velToCutoff  = value ("velToCutoff");
+        p.ampA = value ("ampA"); p.ampD = value ("ampD");
+        p.ampS = value ("ampS"); p.ampR = value ("ampR");
+        p.velToAmp = value ("velToAmp");
+        p.modA = value ("modA"); p.modD = value ("modD");
+        p.modS = value ("modS"); p.modR = value ("modR");
+        p.lfo1Shape = (nd::LfoShape) (int) value ("lfo1Shape");
+        p.lfo2Shape = (nd::LfoShape) (int) value ("lfo2Shape");
+        p.lfo1Rate = value ("lfo1Rate");
+        p.lfo2Rate = value ("lfo2Rate");
+        p.lfo1Retrig = value ("lfo1Retrig") > 0.5f;
+        p.lfo2Retrig = value ("lfo2Retrig") > 0.5f;
+        p.preDriveType  = (nd::DriveType) (int) value ("preDriveType");
+        p.preDrive      = value ("preDrive");
+        p.postDriveType = (nd::DriveType) (int) value ("postDriveType");
+        p.postDrive     = value ("postDrive");
+        p.voiceMode     = (nd::VoiceMode) (int) value ("voiceMode");
+        p.glideTime     = value ("glide");
+        p.randomPhase   = value ("randomPhase") > 0.5f;
+        p.analogDrift   = value ("drift");
+
+        for (int m = 0; m < nd::kNumModSlots; ++m)
+        {
+            const auto n = juce::String (m + 1);
+            p.mod[m].source = (nd::ModSource) (int) value (("modSrc" + n).toRawUTF8());
+            p.mod[m].dest   = (nd::ModDest)   (int) value (("modDst" + n).toRawUTF8());
+            p.mod[m].amount = value (("modAmt" + n).toRawUTF8());
+        }
+
+        const auto& plan = kPlans[i];
+
+        nd::SynthEngine engine;
+        engine.prepare (sr, 12);
+
+        nd::Phaser phaser; phaser.prepare (sr);
+        nd::Ensemble ensemble; ensemble.prepare (sr);
+        nd::StereoDelay delay; delay.prepare (sr);
+        nd::OutputStage out; out.prepare (sr);
+
+        const bool phOn = value ("phaserOn") > 0.5f;
+        const bool enOn = value ("ensembleOn") > 0.5f;
+        const bool dlOn = value ("delayOn") > 0.5f;
+        const bool pmOn = value ("pumpOn") > 0.5f;
+
+        const double bpm = 120.0;
+        float dTime = value ("delayTime");
+        if (value ("delaySync") > 0.5f)
+        {
+            const int di = juce::jlimit (0, ndp::kNumDivisions - 1,
+                                         (int) std::lround (value ("delayDivision")));
+            dTime = (float) ((double) ndp::kDivisions[di].beats * 60.0 / bpm);
+        }
+        const int pi = juce::jlimit (0, ndp::kNumDivisions - 1,
+                                     (int) std::lround (value ("pumpDivision")));
+        const double pumpInc = (bpm / 60.0) / juce::jmax (0.01f, ndp::kDivisions[pi].beats) / sr;
+
+        const float outGain = nd::dbToGain (value ("outputGain"));
+
+        const int total = (int) (sr * plan.totalSeconds);
+        const int gate  = (int) (sr * plan.gateSeconds);
+
+        std::vector<float> L ((size_t) total, 0.0f), R ((size_t) total, 0.0f);
+
+        for (int note : plan.notes)
+            engine.noteOn (note, 0.9f, p);
+
+        int pos = 0;
+        double pumpPhase = 0.0;
+
+        while (pos < total)
+        {
+            const int block = juce::jmin (256, total - pos);
+
+            if (pos < gate && pos + block >= gate)
+                for (int note : plan.notes)
+                    engine.noteOff (note, p);
+
+            engine.render (p, &L[(size_t) pos], &R[(size_t) pos], block);
+
+            for (int s2 = 0; s2 < block; ++s2)
+            {
+                float& l = L[(size_t) (pos + s2)];
+                float& r = R[(size_t) (pos + s2)];
+
+                if (phOn) phaser.process (l, r,
+                        juce::jlimit (2, 12, (int) std::lround (value ("phaserStages"))),
+                        value ("phaserRate"), value ("phaserDepth"), value ("phaserCentre"),
+                        value ("phaserFeedback"), value ("phaserSpread"), value ("phaserMix"));
+                if (enOn) ensemble.process (l, r, value ("ensembleRate"),
+                        value ("ensembleDepth"), value ("ensembleMix"));
+                if (dlOn) delay.process (l, r, dTime, dTime * (1.0f + value ("delayOffset")),
+                        value ("delayFeedback"), value ("delayTone"),
+                        value ("delayPingPong") > 0.5f, value ("delayMix"));
+                if (pmOn)
+                {
+                    const float g = nd::Pump::gainFor ((float) pumpPhase,
+                            value ("pumpDepth"), value ("pumpShape"));
+                    l *= g; r *= g;
+                }
+                pumpPhase += pumpInc;
+                if (pumpPhase >= 1.0) pumpPhase -= 1.0;
+
+                out.process (l, r, outGain);
+            }
+
+            pos += block;
+        }
+
+        // ---- measurements ----
+        const int envWin = (int) (sr * 0.002);
+        std::vector<double> env;
+        for (int w = 0; w + envWin <= total; w += envWin)
+        {
+            double acc = 0.0;
+            for (int s2 = 0; s2 < envWin; ++s2)
+                acc += (double) L[(size_t) (w + s2)] * L[(size_t) (w + s2)];
+            env.push_back (std::sqrt (acc / envWin));
+        }
+
+        double envPeak = 0.0; size_t envPeakAt = 0;
+        for (size_t e = 0; e < env.size(); ++e)
+            if (env[e] > envPeak) { envPeak = env[e]; envPeakAt = e; }
+
+        double attackMs = -1.0;
+        for (size_t e = 0; e < env.size(); ++e)
+            if (env[e] >= 0.9 * envPeak) { attackMs = e * 2.0; break; }
+
+        const size_t gateWin = (size_t) (gate / envWin);
+        double releaseMs = -1.0;
+        for (size_t e = gateWin; e < env.size(); ++e)
+            if (env[e] < envPeak * 0.01) { releaseMs = (e - gateWin) * 2.0; break; }
+
+        float peak = 0.0f;
+        double rms = 0.0;
+        int rmsN = 0;
+        double corrLR = 0.0, pL = 0.0, pR = 0.0;
+        for (int s2 = 0; s2 < total; ++s2)
+        {
+            peak = juce::jmax (peak, std::abs (L[(size_t) s2]), std::abs (R[(size_t) s2]));
+            if (s2 < gate) { rms += (double) L[(size_t) s2] * L[(size_t) s2]; ++rmsN; }
+            corrLR += (double) L[(size_t) s2] * R[(size_t) s2];
+            pL += (double) L[(size_t) s2] * L[(size_t) s2];
+            pR += (double) R[(size_t) s2] * R[(size_t) s2];
+        }
+        rms = std::sqrt (rms / juce::jmax (1, rmsN));
+        const double corr = corrLR / juce::jmax (1e-12, std::sqrt (pL * pR));
+
+        // Spectrum over the sustain (or the whole stab).
+        const int fftStart = plan.gateSeconds < 0.5 ? 0 : (int) (sr * 0.4);
+        juce::dsp::FFT fft (kFftOrder);
+        std::vector<float> spec ((size_t) kFftSize * 2, 0.0f);
+        const auto win = blackmanHarris (kFftSize);
+        for (int s2 = 0; s2 < kFftSize && fftStart + s2 < total; ++s2)
+            spec[(size_t) s2] = L[(size_t) (fftStart + s2)] * win[(size_t) s2];
+        fft.performFrequencyOnlyForwardTransform (spec.data());
+
+        const double binHz = sr / (double) kFftSize;
+        double centroidNum = 0.0, centroidDen = 0.0;
+        double eSub = 0.0, eBass = 0.0, eMid = 0.0, eHigh = 0.0, eAir = 0.0;
+        for (int b = 1; b < kFftSize / 2; ++b)
+        {
+            const double f = b * binHz;
+            const double pw = (double) spec[(size_t) b] * spec[(size_t) b];
+            centroidNum += f * pw; centroidDen += pw;
+            if      (f < 120.0)  eSub  += pw;
+            else if (f < 350.0)  eBass += pw;
+            else if (f < 2000.0) eMid  += pw;
+            else if (f < 6000.0) eHigh += pw;
+            else                 eAir  += pw;
+        }
+        const double eTot = juce::jmax (1e-30, eSub + eBass + eMid + eHigh + eAir);
+
+        auto db = [] (double v) { return 20.0 * std::log10 (juce::jmax (1e-12, v)); };
+
+        std::cout << "  {\"preset\": \"" << plan.name << "\""
+                  << ", \"peak_db\": "   << juce::String (db (peak), 1)
+                  << ", \"rms_db\": "    << juce::String (db (rms), 1)
+                  << ", \"crest_db\": "  << juce::String (db (peak) - db (rms), 1)
+                  << ", \"attack_ms\": " << juce::String (attackMs, 0)
+                  << ", \"release_ms\": " << juce::String (releaseMs, 0)
+                  << ", \"centroid_hz\": " << juce::String (centroidDen > 0 ? centroidNum / centroidDen : 0.0, 0)
+                  << ", \"sub_pct\": "   << juce::String (100.0 * eSub / eTot, 1)
+                  << ", \"bass_pct\": "  << juce::String (100.0 * eBass / eTot, 1)
+                  << ", \"mid_pct\": "   << juce::String (100.0 * eMid / eTot, 1)
+                  << ", \"high_pct\": "  << juce::String (100.0 * eHigh / eTot, 1)
+                  << ", \"air_pct\": "   << juce::String (100.0 * eAir / eTot, 1)
+                  << ", \"stereo_corr\": " << juce::String (corr, 2)
+                  << "}" << (i + 1 < ndp::getNumPresets() ? "," : "") << std::endl;
+    }
+
+    std::cout << "]" << std::endl;
+}
+
+} // namespace features
+
 } // namespace
 
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    if (std::getenv ("NITEDRIVE_DUMP_FEATURES") != nullptr)
+    {
+        features::dump();
+        return 0;
+    }
 
     std::cout << "NITEDRIVE DSP verification" << std::endl;
 
